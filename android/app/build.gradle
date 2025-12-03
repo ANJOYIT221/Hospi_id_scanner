@@ -1,0 +1,50 @@
+// android/app/build.gradle
+
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    // Le plugin Flutter doit rester en dernier
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+android {
+    namespace = "com.hospi_id_scan.hospi_id_scanner"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
+
+    defaultConfig {
+        applicationId = "com.hospi_id_scan.hospi_id_scanner"
+        minSdk = 26
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
+    buildTypes {
+        release {
+            // Signing debug pour simplifier les tests
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+dependencies {
+    // Dépendance vers ton AAR Sunmi (nom du fichier sans l’extension .aar)
+    implementation(name: 'sunmisdk', ext: 'aar')
+
+    // Tes autres dépendances Flutter/Kotlin
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.7.10"
+}
+
+flutter {
+    source = "../.."
+}

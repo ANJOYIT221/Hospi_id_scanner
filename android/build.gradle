@@ -1,0 +1,37 @@
+// android/build.gradle (à la racine du projet Android)
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        // jcenter() si vous l’utilisez encore
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.0.4'
+        // les autres classpath de ton projet (Kotlin, Flutter…)
+    }
+}
+
+// Tous les modules, dont :app, verront ce dépôt flatDir pour les AAR
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        flatDir {
+            // Indique à Gradle de chercher aussi dans android/app/libs
+            dirs("$rootDir/app/libs")
+        }
+    }
+}
+
+rootProject.buildDir = "../build"
+
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+    // Assure que :app est évalué avant les autres modules
+    evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

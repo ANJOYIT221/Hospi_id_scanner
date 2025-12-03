@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#000000"
+    android:padding="32dp"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Animation NFC avec cercles -->
+    <FrameLayout
+        android:layout_width="160dp"
+        android:layout_height="160dp">
+
+        <!-- Cercle extérieur -->
+        <View
+            android:id="@+id/outerPulse"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#1A00E5FF"
+            android:alpha="0.5" />
+
+        <!-- Cercle intérieur -->
+        <View
+            android:id="@+id/innerPulse"
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_gravity="center"
+            android:background="#3300E5FF" />
+
+        <!-- Flèche pointant vers le haut -->
+        <TextView
+            android:text="⬆️"
+            android:textSize="72sp"
+            android:layout_gravity="center"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </FrameLayout>
+
+    <!-- Titre principal -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:text="Approchez votre carte"
+        android:textColor="#FFFFFF"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:letterSpacing="0.02"
+        android:layout_marginTop="32dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+    <!-- Sous-titre -->
+    <TextView
+        android:id="@+id/tvSubtitle"
+        android:text="Placez la carte sur la zone physique NFC de votre appareil"
+        android:textColor="#B0BEC5"
+        android:textSize="15sp"
+        android:gravity="center"
+        android:layout_marginTop="8dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+    <!-- Zone d'état de gravure -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="180dp"
+        android:layout_marginTop="40dp"
+        android:background="#1A263238"
+        android:padding="24dp">
+
+        <!-- Contenu centré -->
+        <LinearLayout
+            android:orientation="vertical"
+            android:gravity="center"
+            android:layout_gravity="center"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+
+            <!-- Icône d'attente -->
+            <TextView
+                android:text="⏳"
+                android:textSize="56sp"
+                android:alpha="0.7"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+            <!-- Texte principal -->
+            <TextView
+                android:text="EN ATTENTE"
+                android:textColor="#90CAF9"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.2"
+                android:layout_marginTop="12dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+            <!-- Sous-texte -->
+            <TextView
+                android:text="Prêt pour la gravure"
+                android:textColor="#607D8B"
+                android:textSize="13sp"
+                android:layout_marginTop="4dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- Bordure animée subtile -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#1A90CAF9"
+            android:layout_gravity="bottom" />
+    </FrameLayout>
+
+    <!-- Barre de progression -->
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:progressTint="#00E5FF"
+        android:progressBackgroundTint="#1A1A1A"
+        android:indeterminate="true"
+        android:layout_marginTop="32dp"
+        android:layout_width="match_parent"
+        android:layout_height="6dp" />
+
+    <!-- Message d'état avec indicateur -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginTop="16dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content">
+
+        <!-- Point de statut -->
+        <View
+            android:id="@+id/statusIndicator"
+            android:layout_width="8dp"
+            android:layout_height="8dp"
+            android:background="#00E5FF"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:text="En attente de détection..."
+            android:textColor="#00E5FF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <!-- Instructions supplémentaires -->
+    <TextView
+        android:text="⚠️ Maintenez la carte immobile pendant la gravure"
+        android:textColor="#546E7A"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:layout_marginTop="24dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
+</LinearLayout>
