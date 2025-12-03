@@ -41,6 +41,7 @@ dependencies:
   camera: ^0.11.0+2
   mobile_scanner:
   ndef: ^0.3.4
+  flutter_dotenv: ^5.1.0
   audioplayers: ^5.2.1
   path_provider: ^2.1.2
   nfc_manager: ^3.4.0
@@ -75,10 +76,10 @@ flutter:
 
 
   assets:
+  - .env
 
 
-
-  # An image asset can refer to one or more resolution-specific "variants", see
+    # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 
   # For details regarding adding assets from package dependencies, see

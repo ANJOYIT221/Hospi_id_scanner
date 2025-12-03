@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:mrz_parser/mrz_parser.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';  // ← Ajoutez cet import
 
 /// ⚠️ POC : clé OpenAI en dur (non sécurisé)
 const String kOpenAIHardcodedKey = "";
@@ -14,6 +15,7 @@ class OCRService {
 
   /// Modèle OpenAI
   final String model;
+  final String kOpenAIHardcodedKey = dotenv.env['OPENAI_API_KEY'] ?? '';
 
   OCRService({
     this.useAiPostProcess = true,

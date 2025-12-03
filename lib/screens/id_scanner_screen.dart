@@ -7,7 +7,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
+import 'document_camera_screen.dart'; // ← AJOUTEZ CETTE LIGNE
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -382,57 +382,130 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   }
 
   // ==================== OCR ====================
+// ==================== OCR ====================
   Future<void> _pickImage(ImageSource src) async {
     _onUserActivity();
-    final picker = ImagePicker();
-    final img = await picker.pickImage(source: src, imageQuality: 85, maxWidth: 1920, maxHeight: 1080);
-    if (img == null) return;
 
-    setState(() { _selectedImage = File(img.path); _extracted = null; _isProcessing = true; });
+    if (src == ImageSource.camera) {
+      // ✅ Ouvrir l'écran de caméra intelligent avec détection automatique
+      final File? photo = await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => DocumentCameraScreen()),
+      );
 
-    _fadeController.forward(); _slideController.forward();
+      if (photo == null) return; // Utilisateur a annulé
 
-    try {
-      final raw = await _ocrService.scanTextFromImage(_selectedImage!);
+      setState(() {
+        _selectedImage = photo;
+        _extracted = null;
+        _isProcessing = true;
+      });
 
-      final hasValidData = raw['nom'] != 'INCONNU' &&
-          raw['nom'] != 'ERREUR' &&
-          (raw['prenoms'] != 'INCONNU' || raw['idNumber'] != 'INCONNU');
+      _fadeController.forward();
+      _slideController.forward();
 
-      if (!hasValidData) {
+      try {
+        final raw = await _ocrService.scanTextFromImage(_selectedImage!);
+
+        final hasValidData = raw['nom'] != 'INCONNU' &&
+            raw['nom'] != 'ERREUR' &&
+            (raw['prenoms'] != 'INCONNU' || raw['idNumber'] != 'INCONNU');
+
+        if (!hasValidData) {
+          if (!mounted) return;
+          setState(() => _isProcessing = false);
+          _showSnackBar("❌ Aucune donnée extraite. Réessayez avec une meilleure photo.", errorRed);
+          await _speak("Je n'ai pas pu lire le document. Réessayez avec une photo plus nette.");
+          return;
+        }
+
+        final normalized = <String, String>{
+          'name': (raw['nom'] ?? raw['nomUsage'] ?? '').toString(),
+          'surname': (raw['prenoms'] ?? raw['givenNames'] ?? '').toString(),
+          'idNumber': (raw['idNumber'] ?? '').toString(),
+          'nationality': (raw['nationalite'] ?? raw['nationality'] ?? '').toString(),
+          ...raw.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')),
+        };
+
+        if (!mounted) return;
+        setState(() {
+          _extracted = Map<String, String>.from(normalized);
+          _isProcessing = false;
+        });
+
+        _sendToReceiver(Map<String, dynamic>.from(normalized));
+        await _verifyBookingAndNotifyPeer(_extracted!);
+        await _speak("Scan terminé.");
+
+      } catch (e) {
         if (!mounted) return;
         setState(() => _isProcessing = false);
-        _showSnackBar("❌ Aucune donnée extraite. Réessayez avec une meilleure photo.", errorRed);
-        await _speak("Je n'ai pas pu lire le document. Réessayez avec une photo plus nette.");
-        return;
+        _showSnackBar("❌ Erreur de traitement : $e", errorRed);
+        await _speak("Erreur de traitement, veuillez réessayer.");
       }
 
-      final normalized = <String, String>{
-        'name': (raw['nom'] ?? raw['nomUsage'] ?? '').toString(),
-        'surname': (raw['prenoms'] ?? raw['givenNames'] ?? '').toString(),
-        'idNumber': (raw['idNumber'] ?? '').toString(),
-        'nationality': (raw['nationalite'] ?? raw['nationality'] ?? '').toString(),
-        ...raw.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')),
-      };
+    } else {
+      // ==================== GALERIE ====================
+      final picker = ImagePicker();
+      final img = await picker.pickImage(
+          source: src,
+          imageQuality: 85,
+          maxWidth: 1920,
+          maxHeight: 1080
+      );
 
-      if (!mounted) return;
-      setState(() { _extracted = Map<String, String>.from(normalized); _isProcessing = false; });
+      if (img == null) return;
 
-      // On peut envoyer un "état live" (optionnel) - ici conservé
-      _sendToReceiver(Map<String, dynamic>.from(normalized));
+      setState(() {
+        _selectedImage = File(img.path);
+        _extracted = null;
+        _isProcessing = true;
+      });
 
-      // ✅ Vérifier la résa MAIS ne pas notifier la borne ici
-      await _verifyBookingAndNotifyPeer(_extracted!);
+      _fadeController.forward();
+      _slideController.forward();
 
-      await _speak("Scan terminé.");
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isProcessing = false);
-      _showSnackBar("❌ Erreur de traitement : $e", errorRed);
-      await _speak("Erreur de traitement, veuillez réessayer.");
+      try {
+        final raw = await _ocrService.scanTextFromImage(_selectedImage!);
+
+        final hasValidData = raw['nom'] != 'INCONNU' &&
+            raw['nom'] != 'ERREUR' &&
+            (raw['prenoms'] != 'INCONNU' || raw['idNumber'] != 'INCONNU');
+
+        if (!hasValidData) {
+          if (!mounted) return;
+          setState(() => _isProcessing = false);
+          _showSnackBar("❌ Aucune donnée extraite. Réessayez avec une meilleure photo.", errorRed);
+          await _speak("Je n'ai pas pu lire le document. Réessayez avec une photo plus nette.");
+          return;
+        }
+
+        final normalized = <String, String>{
+          'name': (raw['nom'] ?? raw['nomUsage'] ?? '').toString(),
+          'surname': (raw['prenoms'] ?? raw['givenNames'] ?? '').toString(),
+          'idNumber': (raw['idNumber'] ?? '').toString(),
+          'nationality': (raw['nationalite'] ?? raw['nationality'] ?? '').toString(),
+          ...raw.map((k, v) => MapEntry(k.toString(), v?.toString() ?? '')),
+        };
+
+        if (!mounted) return;
+        setState(() {
+          _extracted = Map<String, String>.from(normalized);
+          _isProcessing = false;
+        });
+
+        _sendToReceiver(Map<String, dynamic>.from(normalized));
+        await _verifyBookingAndNotifyPeer(_extracted!);
+        await _speak("Scan terminé.");
+
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _isProcessing = false);
+        _showSnackBar("❌ Erreur de traitement : $e", errorRed);
+        await _speak("Erreur de traitement, veuillez réessayer.");
+      }
     }
   }
-
   // ==================== HELPERS UI ====================
   InputDecoration _modernInput(String label, String hint, IconData icon) {
     return InputDecoration(
