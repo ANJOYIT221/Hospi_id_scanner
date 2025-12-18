@@ -4,16 +4,12 @@ import 'dart:convert';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:mrz_parser/mrz_parser.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart';  // ← Ajoutez cet import
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-/// ⚠️ POC : clé OpenAI en dur (non sécurisé)
 const String kOpenAIHardcodedKey = "";
 
 class OCRService {
-  /// Active le post-traitement IA (OpenAI).
   final bool useAiPostProcess;
-
-  /// Modèle OpenAI
   final String model;
   final String kOpenAIHardcodedKey = dotenv.env['OPENAI_API_KEY'] ?? '';
 
@@ -21,6 +17,21 @@ class OCRService {
     this.useAiPostProcess = true,
     this.model = "gpt-4o-mini",
   });
+
+  // ✅ DICTIONNAIRE DES PRÉNOMS FRANÇAIS FRÉQUENTS
+  static const Set<String> _commonFrenchNames = {
+    'MARIE', 'JEAN', 'PIERRE', 'MICHEL', 'ANDRÉ', 'PHILIPPE', 'ALAIN',
+    'JACQUES', 'BERNARD', 'CHRISTIAN', 'DANIEL', 'PAUL', 'NICOLAS',
+    'FRANÇOIS', 'FRÉDÉRIC', 'STÉPHANE', 'LAURENT', 'PATRICK', 'CHRISTOPHE',
+    'JULIEN', 'DAVID', 'THOMAS', 'ALEXANDRE', 'OLIVIER', 'SYLVAIN',
+    'SÉBASTIEN', 'ÉRIC', 'JÉRÔME', 'GÉRARD', 'CÉDRIC', 'PASCAL',
+    'NATHALIE', 'ISABELLE', 'SYLVIE', 'CATHERINE', 'CHRISTINE', 'SOPHIE',
+    'MARTINE', 'MONIQUE', 'FRANÇOISE', 'VALÉRIE', 'SANDRINE', 'VÉRONIQUE',
+    'CÉLINE', 'AURÉLIE', 'ÉMILIE', 'CAROLINE', 'JULIE', 'STEPHANIE',
+    'SÉVERINE', 'HÉLÈNE', 'DELPHINE', 'STÉPHANIE', 'BÉATRICE', 'BRIGITTE',
+    'AGNÈS', 'MÉLANIE', 'ÉLISE', 'AMÉLIE', 'LÉA', 'ZOÉ', 'CHLOÉ',
+    'JOSÉ', 'RENÉ', 'RAPHAËL', 'MICHAËL', 'JOËL', 'GAËL',
+  };
 
   Future<Map<String, String>> scanTextFromImage(File imageFile) async {
     final inputImage = InputImage.fromFile(imageFile);
@@ -31,57 +42,198 @@ class OCRService {
       final fullText = recognizedText.text;
       print('🔍 OCR brut :\n$fullText');
 
+      // ✅ PRÉ-CORRECTION des erreurs OCR communes
+      final correctedText = _correctCommonOcrErrors(fullText);
+      print('🔧 OCR corrigé :\n$correctedText');
+
       // 1) MRZ
-      final mrzMap = _tryMRZ(fullText);
+      final mrzMap = _tryMRZ(correctedText);
       if (mrzMap.isNotEmpty) {
         print('📤 MRZ trouvée → $mrzMap');
         final base = _withDefaultsAndClean(mrzMap);
-        return await _maybeAiRefine(fullText, base);
+        return await _maybeAiRefine(correctedText, base);
       }
 
       // 2) Titre de séjour FR
-      final sejour = _extractFrenchResidencePermit(fullText);
+      final sejour = _extractFrenchResidencePermit(correctedText);
       if (sejour.isNotEmpty) {
         print('📤 Titre de séjour → $sejour');
         final base = _withDefaultsAndClean(sejour);
-        return await _maybeAiRefine(fullText, base);
+        return await _maybeAiRefine(correctedText, base);
       }
 
       // 3) Nouvelle CNI FR (sans MRZ)
-      final newCni = _extractNewFrenchID(fullText);
+      final newCni = _extractNewFrenchID(correctedText);
       if (newCni.isNotEmpty) {
         print('📤 Nouvelle CNI → $newCni');
         final base = _withDefaultsAndClean(newCni);
-        return await _maybeAiRefine(fullText, base);
+        return await _maybeAiRefine(correctedText, base);
       }
 
       // 4) Fallback strict
-      final classic = _extractDataFromText(fullText);
+      final classic = _extractDataFromText(correctedText);
       print('📤 Fallback labels → $classic');
       final base = _withDefaultsAndClean(classic);
-      return await _maybeAiRefine(fullText, base);
+      return await _maybeAiRefine(correctedText, base);
     } finally {
       await textRecognizer.close();
     }
   }
 
-  /* ========================= IA OpenAI ========================= */
+  /* ========================= CORRECTION ERREURS OCR ========================= */
+
+  /// ✅ Corrige les erreurs OCR typiques avec les accents français
+  String _correctCommonOcrErrors(String text) {
+    String corrected = text;
+
+    // Corrections de patterns OCR → Accents
+    final corrections = {
+      // é mal lu
+      'ae': 'é',    // Saevine → Séverine
+      'ee': 'ée',   // Andreee → Andrée
+      'é0': 'é',    // erreur avec chiffre 0
+
+      // è mal lu
+      'è0': 'è',
+      'e`': 'è',
+
+      // à mal lu
+      'à0': 'à',
+      'a`': 'à',
+
+      // ô mal lu
+      'ô0': 'ô',
+      'o^': 'ô',
+
+      // ç mal lu
+      'c,': 'ç',
+      'ç0': 'ç',
+    };
+
+    // Application des corrections par mot
+    final words = corrected.split(RegExp(r'\s+'));
+    final correctedWords = <String>[];
+
+    for (var word in words) {
+      String correctedWord = word;
+
+      // Vérifier si le mot ressemble à un prénom mal lu
+      for (final entry in corrections.entries) {
+        if (correctedWord.toLowerCase().contains(entry.key)) {
+          final testWord = correctedWord.toLowerCase().replaceAll(entry.key, entry.value);
+
+          // Vérifier si la correction donne un prénom connu
+          if (_commonFrenchNames.contains(testWord.toUpperCase())) {
+            correctedWord = testWord;
+            print('✅ Correction OCR: $word → $correctedWord');
+            break;
+          }
+        }
+      }
+
+      correctedWords.add(correctedWord);
+    }
+
+    return correctedWords.join(' ');
+  }
+
+  /// ✅ Calcule la distance de Levenshtein (similarité entre 2 mots)
+  int _levenshteinDistance(String s1, String s2) {
+    if (s1 == s2) return 0;
+    if (s1.isEmpty) return s2.length;
+    if (s2.isEmpty) return s1.length;
+
+    List<int> v0 = List<int>.generate(s2.length + 1, (i) => i);
+    List<int> v1 = List<int>.filled(s2.length + 1, 0);
+
+    for (int i = 0; i < s1.length; i++) {
+      v1[0] = i + 1;
+      for (int j = 0; j < s2.length; j++) {
+        int cost = (s1[i] == s2[j]) ? 0 : 1;
+        v1[j + 1] = [v1[j] + 1, v0[j + 1] + 1, v0[j] + cost].reduce((a, b) => a < b ? a : b);
+      }
+      List<int> temp = v0;
+      v0 = v1;
+      v1 = temp;
+    }
+
+    return v0[s2.length];
+  }
+
+  /// ✅ Trouve le prénom français le plus proche
+  String? _findClosestFrenchName(String input) {
+    if (input.length < 3) return null;
+
+    final inputUpper = input.toUpperCase();
+    String? bestMatch;
+    int bestDistance = 999;
+
+    for (final name in _commonFrenchNames) {
+      final distance = _levenshteinDistance(inputUpper, name);
+
+      // Si distance <= 2, c'est probablement le bon prénom
+      if (distance < bestDistance && distance <= 2) {
+        bestDistance = distance;
+        bestMatch = name;
+      }
+    }
+
+    if (bestMatch != null && bestDistance <= 2) {
+      print('🔍 Prénom corrigé: $input → $bestMatch (distance: $bestDistance)');
+      return _titleCase(bestMatch);
+    }
+
+    return null;
+  }
+
+  /* ========================= IA OpenAI AMÉLIORÉE ========================= */
 
   Future<Map<String, String>> _maybeAiRefine(
       String ocr,
       Map<String, String> base,
       ) async {
     if (!useAiPostProcess || kOpenAIHardcodedKey.trim().isEmpty) {
-      return base;
+      return _postProcessWithDictionary(base);
     }
     try {
       final refined = await _aiRefine(ocr, base);
-      if (refined.isNotEmpty) return refined;
+      if (refined.isNotEmpty) return _postProcessWithDictionary(refined);
     } catch (e) {
-      // NE PAS jeter – on log et on garde base
       print('⚠️ AI refine error: $e');
     }
-    return base;
+    return _postProcessWithDictionary(base);
+  }
+
+  /// ✅ Post-traitement avec dictionnaire de prénoms
+  Map<String, String> _postProcessWithDictionary(Map<String, String> data) {
+    final result = Map<String, String>.from(data);
+
+    // Correction des prénoms
+    final prenoms = result['prenoms'] ?? '';
+    if (prenoms.isNotEmpty && prenoms != 'INCONNU') {
+      final words = prenoms.split(RegExp(r'\s+'));
+      final correctedWords = <String>[];
+
+      for (final word in words) {
+        final corrected = _findClosestFrenchName(word);
+        correctedWords.add(corrected ?? word);
+      }
+
+      result['prenoms'] = correctedWords.join(' ');
+      result['givenNames'] = correctedWords.join(' ');
+    }
+
+    // Correction du nom
+    final nom = result['nom'] ?? '';
+    if (nom.isNotEmpty && nom != 'INCONNU') {
+      final corrected = _findClosestFrenchName(nom);
+      if (corrected != null) {
+        result['nom'] = corrected;
+        result['nomUsage'] = corrected;
+      }
+    }
+
+    return result;
   }
 
   Future<Map<String, String>> _aiRefine(
@@ -91,30 +243,46 @@ class OCRService {
     final uri = Uri.parse('https://api.openai.com/v1/chat/completions');
 
     final system = '''
-Tu es un post-processeur d'OCR pour des documents d'identité (Titre de séjour FR, CNI, passeport).
-Nettoie et structure les champs en JSON. Ne devine pas si l'info n'est pas certaine.
-Retourne EXCLUSIVEMENT un JSON avec les clés:
-- nom (string)
-- prenoms (string)  // concat de tous les prénoms
-- idNumber (string) // numéro personnel / document
-- nationalite (string) // code ISO-3 si possible (ex: FRA, SEN), sinon texte
+Tu es un expert en correction d'erreurs OCR sur des documents d'identité français.
+
+ERREURS OCR FRÉQUENTES À CORRIGER :
+- "ae" → "é" (ex: "Saevine" → "Séverine")
+- "ee" → "ée" (ex: "Andreee" → "Andrée")
+- "ç" confondu avec "c,"
+- "é" confondu avec "e0" ou "é0"
+- "è" confondu avec "e`"
+- Espaces manquants entre prénoms
+
+PRÉNOMS FRANÇAIS COURANTS (pour validation) :
+Séverine, Stéphanie, Frédéric, Sébastien, Jérôme, Cédric, Éric, Hélène, 
+Céline, Valérie, Françoise, José, André, Raphaël, Michaël, Amélie, Léa, Zoé, Chloé
+
+INSTRUCTIONS :
+1. Détecte et corrige les erreurs OCR typiques
+2. Vérifie que les prénoms correspondent à des prénoms français réels
+3. PRÉSERVE TOUS LES ACCENTS français (é, è, ê, à, ç, ô, etc.)
+4. Conserve les MAJUSCULES pour les noms de famille
+5. Met les prénoms en Title Case (José, Séverine)
+
+Retourne EXCLUSIVEMENT un JSON avec :
+- nom (string, MAJUSCULES)
+- prenoms (string, Title Case avec accents corrects)
+- idNumber (string)
+- nationalite (string, code ISO-3 type FRA, SEN)
 - birthDate (string, JJ/MM/AAAA ou vide)
 - validUntil (string, JJ/MM/AAAA ou vide)
-Règles:
-- Supprime les mots parasites de libellés (SURNAMES, FORENAMES, GIVEN NAMES, etc.)
-- "M SEN" signifie sexe M et nationalité SEN → renvoyer "SEN".
-- Conserve NOM en majuscules si l'OCR est full uppercase (ex: NDIAYE).
-- Ne renvoie que le JSON, sans commentaire.
 ''';
 
     final user = '''
-OCR:
+OCR brut (contient des erreurs d'accents) :
 """
 $ocrText
 """
 
-Base JSON (pré-rempli, corriger si nécessaire):
+Base JSON (pré-rempli, CORRIGE LES ERREURS OCR) :
 ${jsonEncode(current)}
+
+ATTENTION : Si tu vois "Saevine", c'est "Séverine" !
 ''';
 
     final body = {
@@ -137,14 +305,12 @@ ${jsonEncode(current)}
     );
 
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
-      // ne pas jeter un bool/Null – on remonte une exception contrôlée
       throw Exception('OpenAI error ${resp.statusCode}: ${resp.body}');
     }
 
     final data = jsonDecode(resp.body);
     final content = data["choices"]?[0]?["message"]?["content"];
     if (content is! String || content.trim().isEmpty) {
-      // mode dégradé – pas d'exception booléenne
       print('⚠️ OpenAI empty content – fallback to base');
       return current;
     }
@@ -157,7 +323,6 @@ ${jsonEncode(current)}
       return current;
     }
 
-    // normalisation douce des champs requis
     return {
       'nom': _cleanName((parsed['nom'] ?? current['nom'] ?? '').toString()),
       'prenoms': _cleanName((parsed['prenoms'] ?? current['prenoms'] ?? '').toString()),
@@ -175,7 +340,7 @@ ${jsonEncode(current)}
     final rawLines = text.split('\n');
     final lines = <String>[];
     for (final l in rawLines) {
-      if (l != null) { // safe
+      if (l != null) {
         final t = l.trim();
         if (t.isNotEmpty) lines.add(t);
       }
@@ -218,7 +383,7 @@ ${jsonEncode(current)}
     }
   }
 
-  /* ===== TITRE DE SÉJOUR FR – robustifié (pas de where/any/every) ===== */
+  /* ===== TITRE DE SÉJOUR FR ===== */
 
   Map<String, String> _extractFrenchResidencePermit(String raw) {
     final rawLines = raw.split('\n');
@@ -299,7 +464,6 @@ ${jsonEncode(current)}
           final m = RegExp(r'\b([A-Z]{3})\b').firstMatch(natLine);
           if (m != null && m.group(1) != null) {
             final code = m.group(1)!;
-            // éviter de prendre "NOM" comme code 3 lettres
             if (code != 'NOM') nat = code;
           }
           if (i + 2 < lines.length) {
@@ -365,14 +529,16 @@ ${jsonEncode(current)}
     String nom = '', prenoms = '', id = '', nat = '', nomUsage = '';
 
     final nomMatch = RegExp(
-      r'(?:\bNOM(?:S)?\b|\bSURNAME(?:S)?\b)\s*[:\-]\s*([A-ZÀÂÄÉÈÊËÏÎÔÙÛÜŸÇ\s\-]{2,40})',
+      "(?:\\bNOM(?:S)?\\b|\\bSURNAME(?:S)?\\b)\\s*[:\\-]\\s*([A-ZÀÂÄÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝŸ\\s\\-']{2,40})",
+      caseSensitive: false,
     ).firstMatch(tUpper);
     if (nomMatch != null && nomMatch.group(1) != null) {
       nom = _cleanName(nomMatch.group(1)!);
     }
 
     final prenomMatch = RegExp(
-      r'(?:\bPR[ÉE]NOM(?:S)?\b|\bGIVEN\s+NAME(?:S)?\b|\bFORENAME(?:S)?\b)\s*[:\-]\s*([A-ZÀÂÄÉÈÊËÏÎÔÙÛÜŸÇ\s\-]{2,80})',
+      "(?:\\bPR[ÉE]NOM(?:S)?\\b|\\bGIVEN\\s+NAME(?:S)?\\b|\\bFORENAME(?:S)?\\b)\\s*[:\\-]\\s*([A-ZÀÂÄÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝŸ\\s\\-']{2,80})",
+      caseSensitive: false,
     ).firstMatch(tUpper);
     if (prenomMatch != null && prenomMatch.group(1) != null) {
       prenoms = _cleanName(prenomMatch.group(1)!);
@@ -395,7 +561,7 @@ ${jsonEncode(current)}
       if (m != null && m.group(1) != null && m.group(1) != 'NOM') nat = m.group(1)!;
     }
 
-    final usageMatch = RegExp(r"NOM\s+D['’]?USAGE\s*[:\-]\s*([A-ZÀÂÄÉÈÊËÏÎÔÙÛÜŸÇ\s\-]{2,40})")
+    final usageMatch = RegExp("NOM\\s+D['']?USAGE\\s*[:\\-]\\s*([A-ZÀÂÄÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝŸ\\s\\-']{2,40})")
         .firstMatch(tUpper);
     if (usageMatch != null && usageMatch.group(1) != null) {
       nomUsage = _cleanName(usageMatch.group(1)!);
@@ -470,7 +636,6 @@ ${jsonEncode(current)}
       if (s != null && s.length > bestLen) { bestLen = s.length; id = s; }
     }
 
-    // Essaie de prendre un code 3 lettres, mais évite le mot "NOM"
     final natM = RegExp(r'\b([A-Z]{3})\b').allMatches(_uc(txt));
     for (final m in natM) {
       final cand = m.group(1);
@@ -493,7 +658,6 @@ ${jsonEncode(current)}
       s.toUpperCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 
   bool _isLabelLine(String u) {
-    // retourne TOUJOURS un bool
     return RegExp(
       r'(NOM|SURNAME|PR[ÉE]NOM|FORENAME|GIVEN|NATIONAL|NAT\.?|DATE|BIRTH|CAT|PERMIT|VALABLE|VALID|NUM|NUMBER|DOCUMENT|RESIDENCE)',
     ).hasMatch(u);
@@ -502,10 +666,17 @@ ${jsonEncode(current)}
   String _cleanName(String s) {
     var out = s.replaceAll(RegExp(r'[*•.,;:]+'), ' ');
     out = out.replaceAll(RegExp(r'\s+'), ' ').trim();
-    out = out.replaceAll(RegExp(r'\b(NOM|SURNAME|PRENOM|PRÉNOM|FORENAME|GIVEN|NAME|NAMES)\b', caseSensitive: false), '').trim();
+    out = out.replaceAll(
+        RegExp(r'\b(NOM|SURNAME|PRENOM|PRÉNOM|FORENAME|GIVEN|NAME|NAMES)\b', caseSensitive: false),
+        ''
+    ).trim();
+
     if (out.isEmpty || RegExp(r'\d').hasMatch(out)) return 'INCONNU';
+
     final allUpper = out == out.toUpperCase();
-    return allUpper ? out : _titleCase(out);
+    if (allUpper) return out;
+
+    return _titleCase(out);
   }
 
   bool _looksLikeName(String s) {
@@ -586,7 +757,6 @@ ${jsonEncode(current)}
   String _cleanNat(String s) {
     final v = s.trim().toUpperCase();
     if (v.isEmpty) return 'Inconnue';
-    // filtre des faux positifs courants (NOM, PRENOM, etc.)
     const bad = {'NOM', 'PRENOM', 'PRENOMS', 'NAME', 'NAMES'};
     if (bad.contains(v)) return 'Inconnue';
     const map = {'FRA': 'FRA', 'FR': 'FRA', 'SEN': 'SEN'};

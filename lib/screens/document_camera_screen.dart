@@ -51,7 +51,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   static const int _requiredDetections = 3;
 
   // ✅ OPTIMISATION : Fréquence d'analyse réduite
-  static const int _analysisPeriodMs = 800; // Avant: 500ms
+  static const int _analysisPeriodMs = 800;
 
   // Dimensions des cadres
   static const Map<DocumentType, Map<String, double>> _frameSizes = {
@@ -60,25 +60,11 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     DocumentType.passport: {'width': 380, 'height': 270},
   };
 
-  // Couleurs des cadres
+  // Couleurs des cadres (gardées)
   static const Map<DocumentType, Color> _frameColors = {
     DocumentType.newId: Colors.cyan,
     DocumentType.oldId: Colors.purpleAccent,
     DocumentType.passport: Colors.blue,
-  };
-
-  // Noms des documents
-  static const Map<DocumentType, String> _frameNames = {
-    DocumentType.newId: 'Nouvelle CNI',
-    DocumentType.oldId: 'Ancienne CNI',
-    DocumentType.passport: 'Passeport',
-  };
-
-  // Icônes des documents
-  static const Map<DocumentType, IconData> _frameIcons = {
-    DocumentType.newId: Icons.credit_card,
-    DocumentType.oldId: Icons.badge,
-    DocumentType.passport: Icons.menu_book,
   };
 
   @override
@@ -95,7 +81,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       duration: const Duration(seconds: 5),
     );
 
-    // ✅ OPTIMISATION : Initialiser le recognizer une seule fois
     _textRecognizer = GoogleMlKit.vision.textRecognizer();
 
     _initCamera();
@@ -106,7 +91,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       final cameras = await availableCameras();
       _camera = CameraController(
         cameras.first,
-        ResolutionPreset.high, // ✅ Garder high comme demandé
+        ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
@@ -123,7 +108,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   }
 
   void _startDocumentDetection() {
-    // ✅ OPTIMISATION : Fréquence réduite à 800ms
     _detectionTimer = Timer.periodic(
       const Duration(milliseconds: _analysisPeriodMs),
           (timer) async {
@@ -148,7 +132,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       final inputImage = InputImage.fromFilePath(tempFilePath);
       final RecognizedText recognizedText = await _textRecognizer!.processImage(inputImage);
 
-      // ✅ OPTIMISATION : Supprimer immédiatement le fichier temporaire
       try {
         await File(tempFilePath).delete();
       } catch (_) {}
@@ -166,7 +149,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
           _detectedType = detectedType;
         });
 
-        debugPrint('📄 Document: ${_frameNames[detectedType]} (${_consecutiveDetections}/$_requiredDetections)');
+        debugPrint('📄 Document détecté (${_consecutiveDetections}/$_requiredDetections)');
 
         if (_consecutiveDetections >= _requiredDetections && !_isDetecting) {
           _startCountdown();
@@ -187,7 +170,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       }
     } catch (e) {
       debugPrint('Erreur analyse frame: $e');
-      // ✅ OPTIMISATION : Nettoyer en cas d'erreur
       if (tempFilePath != null) {
         try {
           await File(tempFilePath).delete();
@@ -269,7 +251,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     required int totalTextLength,
     required int blockCount,
   }) {
-    // 1. Vérifier les mots-clés spécifiques au passeport
     final bool isPassport = allText.contains('PASSEPORT') ||
         allText.contains('PASSPORT') ||
         allText.contains('P<FRA') ||
@@ -280,14 +261,12 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       return DocumentType.passport;
     }
 
-    // 2. Vérifier les mots-clés spécifiques à la nouvelle CNI
     final bool isNewId = allText.contains('IDFRA') ||
         allText.contains('TITRE DE SEJOUR') ||
         allText.contains('RESIDENCE PERMIT') ||
         allText.contains('CARTE NATIONALE') ||
         allText.contains('IDENTITY CARD');
 
-    // 3. Passeport : beaucoup de texte, grande zone, MRZ longue
     if (totalTextLength > 150 && blockCount > 5) {
       int mrzIndicators = '<'.allMatches(allText).length;
       if (mrzIndicators > 10) {
@@ -295,7 +274,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       }
     }
 
-    // 4. Grande zone de texte → probablement passeport ou ancienne CNI
     if (textWidth > 600 && textHeight > 400) {
       if (totalTextLength > 120) {
         return DocumentType.passport;
@@ -304,17 +282,14 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       }
     }
 
-    // 5. Zone moyenne → ancienne CNI
     if (textWidth > 450 && textHeight > 300) {
       return DocumentType.oldId;
     }
 
-    // 6. Nouvelle CNI / Titre de séjour
     if (isNewId || (textWidth < 500 && textHeight < 350)) {
       return DocumentType.newId;
     }
 
-    // Par défaut
     return DocumentType.newId;
   }
 
@@ -446,7 +421,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
           // Overlay sombre
           _buildOverlay(),
 
-          // Multi-cadres
+          // Multi-cadres (SANS LES LABELS)
           Center(child: _buildMultiFrames()),
 
           // Compte à rebours de capture
@@ -479,7 +454,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
               ),
             ),
 
-          // Message de statut avec type détecté
+          // Message de statut SANS mention du type
           Positioned(
             bottom: 180,
             left: 20,
@@ -498,56 +473,21 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
                   width: 2,
                 ),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _isDetecting
-                        ? '📸 ${_frameNames[_detectedType]} détecté ! Photo dans $_countdown...'
-                        : '📄 Placez votre document dans le cadre correspondant',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      shadows: [
-                        Shadow(color: Colors.black, blurRadius: 10),
-                      ],
-                    ),
-                  ),
-                  if (_detectedType != DocumentType.none && !_isDetecting) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          _frameIcons[_detectedType],
-                          color: _frameColors[_detectedType],
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Format détecté : ${_frameNames[_detectedType]}',
-                          style: TextStyle(
-                            color: _frameColors[_detectedType],
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
+              child: Text(
+                _isDetecting
+                    ? '📸 Document détecté ! Photo dans $_countdown...'
+                    : '📄 Placez votre document dans le cadre',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  shadows: [
+                    Shadow(color: Colors.black, blurRadius: 10),
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-
-          // Légende des cadres
-          Positioned(
-            bottom: 100,
-            left: 20,
-            right: 20,
-            child: _buildFrameLegend(),
           ),
 
           // Indicateur de scan actif
@@ -647,6 +587,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     );
   }
 
+  // ✅ Multi-cadres SANS labels
   Widget _buildMultiFrames() {
     return AnimatedBuilder(
       animation: _pulseController,
@@ -654,19 +595,14 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
         return Stack(
           alignment: Alignment.center,
           children: [
-            // Cadre Passeport (le plus grand, en arrière)
             _buildSingleFrame(
               type: DocumentType.passport,
               isActive: _detectedType == DocumentType.passport,
             ),
-
-            // Cadre Ancienne CNI (moyen)
             _buildSingleFrame(
               type: DocumentType.oldId,
               isActive: _detectedType == DocumentType.oldId,
             ),
-
-            // Cadre Nouvelle CNI (le plus petit, devant)
             _buildSingleFrame(
               type: DocumentType.newId,
               isActive: _detectedType == DocumentType.newId,
@@ -677,6 +613,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     );
   }
 
+  // ✅ Cadre simple SANS label
   Widget _buildSingleFrame({
     required DocumentType type,
     required bool isActive,
@@ -707,106 +644,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
           ),
         ],
       ),
-      child: isActive
-          ? Align(
-        alignment: Alignment.topRight,
-        child: Container(
-          margin: const EdgeInsets.all(8),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(_frameIcons[type], color: Colors.white, size: 14),
-              const SizedBox(width: 4),
-              Text(
-                _frameNames[type]!,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-      )
-          : null,
-    );
-  }
-
-  Widget _buildFrameLegend() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.6),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white24, width: 1),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _buildLegendItem(DocumentType.newId),
-          _buildLegendDivider(),
-          _buildLegendItem(DocumentType.oldId),
-          _buildLegendDivider(),
-          _buildLegendItem(DocumentType.passport),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLegendItem(DocumentType type) {
-    final bool isActive = _detectedType == type;
-    final color = _frameColors[type]!;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: isActive ? color.withOpacity(0.3) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isActive ? color : Colors.transparent,
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(3),
-              boxShadow: isActive
-                  ? [BoxShadow(color: color.withOpacity(0.6), blurRadius: 6)]
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            _frameNames[type]!,
-            style: TextStyle(
-              color: isActive ? Colors.white : Colors.white70,
-              fontSize: 11,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLegendDivider() {
-    return Container(
-      width: 1,
-      height: 20,
-      color: Colors.white24,
     );
   }
 
@@ -854,7 +691,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
             ),
           ),
 
-          // Message avec compte à rebours
+          // Message avec compte à rebours (SANS mention du type)
           Positioned(
             top: 60,
             left: 20,
@@ -873,16 +710,16 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
                 children: [
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
+                    children: const [
                       Icon(
-                        _frameIcons[_detectedType] ?? Icons.document_scanner,
-                        color: _frameColors[_detectedType] ?? Colors.cyan,
+                        Icons.document_scanner,
+                        color: Colors.cyan,
                         size: 24,
                       ),
-                      const SizedBox(width: 10),
+                      SizedBox(width: 10),
                       Text(
-                        '${_frameNames[_detectedType] ?? "Document"} capturé !',
-                        style: const TextStyle(
+                        'Document capturé !',
+                        style: TextStyle(
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -1068,7 +905,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     _camera?.dispose();
     _pulseController.dispose();
     _progressController.dispose();
-    // ✅ OPTIMISATION : Fermer proprement le recognizer
     _textRecognizer?.close();
     super.dispose();
   }

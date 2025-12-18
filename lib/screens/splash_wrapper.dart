@@ -1,5 +1,5 @@
 // =======================
-// splash_wrapper.dart (Scanner) - Avec gestion connexion + badge compact
+// splash_wrapper.dart (Scanner) - Navigation automatique dès connexion
 // =======================
 
 import 'dart:convert';
@@ -35,6 +35,9 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   bool _isConnected = false;
   String _receiverIP = "0.0.0.0";
   int _receiverPort = 3000;
+
+  // ✅ NOUVEAU : Flag pour navigation automatique (une seule fois)
+  bool _autoNavigated = false;
 
   // Discovery
   static const int _discoveryPort = 3001;
@@ -111,7 +114,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     try {
       _mcastListenSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
       _mcastListenSocket!.joinMulticast(_mcastAddr);
-      // ignore: avoid_print
       print("👂 Écoute heartbeat multicast sur ${_mcastAddr.address}:$_discoveryPort");
 
       _mcastListenSocket!.listen((evt) {
@@ -128,7 +130,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                   ? parsed['port']
                   : int.tryParse(parsed['port']?.toString() ?? '3000') ?? 3000;
 
-              // ignore: avoid_print
               print("💓 Heartbeat: mac=$mac ip=$ip port=$port");
 
               if (mac != null && (_wantedMac.isEmpty || mac == _wantedMac)) {
@@ -148,7 +149,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         }
       });
     } catch (e) {
-      // ignore: avoid_print
       print("❌ Multicast listener KO: $e");
     }
   }
@@ -202,7 +202,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
             if (mac != null && mac.isNotEmpty) {
               results[mac] = {'ip': ip, 'port': port, 'raw': parsed};
-              // ignore: avoid_print
               print("🔍 Découverte: mac=$mac ip=$ip port=$port");
             }
           } catch (_) {}
@@ -212,7 +211,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       await completer.future;
       timer.cancel();
     } catch (e) {
-      // ignore: avoid_print
       print("❌ discoverReceivers error: $e");
     } finally {
       socket?.close();
@@ -222,11 +220,9 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   }
 
   Future<void> _runDiscoveryAndConnect() async {
-    // ignore: avoid_print
     print("🔎 Lancement découverte UDP…");
     final discovered = await discoverReceivers(timeoutSeconds: 3, repeats: 3);
     if (discovered.isEmpty) {
-      // ignore: avoid_print
       print("😕 Aucun récepteur trouvé (broadcast).");
       return;
     }
@@ -237,7 +233,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     if (_wantedMac.isNotEmpty && discovered.containsKey(_wantedMac)) {
       selectedIp = discovered[_wantedMac]!['ip'];
       selectedPort = discovered[_wantedMac]!['port'];
-      // ignore: avoid_print
       print("✅ Récepteur ciblé: $_wantedMac → $selectedIp:$selectedPort");
     }
 
@@ -253,7 +248,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   // -------------------------------------------------
   Future<void> _connectWebSocket() async {
     if (_receiverIP == "0.0.0.0" || _receiverIP.trim().isEmpty) {
-      // ignore: avoid_print
       print("⏭️ IP inconnue, on ne tente pas la connexion.");
       return;
     }
@@ -261,12 +255,23 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     for (;;) {
       try {
         final uri = 'ws://$_receiverIP:$_receiverPort';
-        // ignore: avoid_print
         print("🔗 Connexion WebSocket sur $uri …");
         _socket = await WebSocket.connect(uri);
+
         setState(() => _isConnected = true);
-        // ignore: avoid_print
         print("✅ WebSocket connecté");
+
+        // ✅ NAVIGATION AUTOMATIQUE DÈS CONNEXION
+        if (!_autoNavigated && mounted) {
+          _autoNavigated = true;
+          // Petit délai pour l'animation de l'indicateur
+          Future.delayed(const Duration(milliseconds: 800), () {
+            if (mounted && showLanding) {
+              print("🚀 Navigation automatique vers IdScannerScreen");
+              _handleTap();
+            }
+          });
+        }
 
         _socket!.listen(
               (msg) {
@@ -277,7 +282,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           },
           onDone: () {
             setState(() => _isConnected = false);
-            // ignore: avoid_print
             print("🔌 WebSocket déconnecté");
             _reconnect();
           },
@@ -288,7 +292,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         );
         break;
       } catch (e) {
-        // ignore: avoid_print
         print("❌ WebSocket impossible ($e). Pause 2s…");
         await Future.delayed(const Duration(seconds: 2));
         if (_receiverIP == "0.0.0.0") return;
@@ -438,6 +441,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   void _returnToSplash() {
     setState(() {
       showLanding = true;
+      _autoNavigated = false; // ✅ Réinitialiser pour permettre une nouvelle navigation automatique
     });
   }
 
@@ -500,7 +504,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           child: GestureDetector(
             onTap: _promptManualConnect,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), // compact
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(18),
@@ -550,14 +554,14 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                         _isConnected ? "Connecté" : "Hors ligne",
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 12, // réduit
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.2,
                         ),
                       ),
                       if (_isConnected && _receiverIP != "0.0.0.0")
                         SizedBox(
-                          width: 90, // limite pour éviter d’empiéter
+                          width: 90,
                           child: Text(
                             _receiverIP,
                             maxLines: 1,
@@ -574,39 +578,13 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                   Icon(
                     Icons.settings,
                     color: Colors.white.withOpacity(0.9),
-                    size: 14, // réduit
+                    size: 14,
                   ),
                 ],
               ),
             ),
           ),
         ),
-
-        // ---- Variante ultra-compacte (UNIQUEMENT un DOT) ----
-        // Positioned(
-        //   top: 20,
-        //   right: 14,
-        //   child: IconButton(
-        //     onPressed: _promptManualConnect,
-        //     iconSize: 18,
-        //     tooltip: _isConnected ? "Connecté – appuyer pour configurer" : "Hors ligne – appuyer pour configurer",
-        //     icon: Container(
-        //       width: 12,
-        //       height: 12,
-        //       decoration: BoxDecoration(
-        //         color: _isConnected ? const Color(0xFF10B981) : const Color(0xFFE63946),
-        //         shape: BoxShape.circle,
-        //         boxShadow: [
-        //           BoxShadow(
-        //             color: (_isConnected ? const Color(0xFF10B981) : const Color(0xFFE63946)).withOpacity(0.6),
-        //             blurRadius: 6,
-        //             spreadRadius: 1,
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-        //   ),
-        // ),
 
         // Main content (logo + titres + invite "appuyez pour commencer")
         Center(
@@ -678,7 +656,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                           borderRadius: BorderRadius.circular(30),
                         ),
                         child: Text(
-                          "",
+                          _isConnected ? "Connexion établie ✓" : "Connexion en cours...",
                           style: TextStyle(
                             fontSize: 18,
                             color: Colors.white.withOpacity(0.95),
