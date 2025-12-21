@@ -340,7 +340,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       await _speak("Parfait !.");
 
       // ✅ ENVOI À LA BORNE APRÈS SUCCÈS DE LA GRAVURE
-      // (on peut optionnellement prévenir la borne que le check-in démarre)
       _sendToReceiver({"action": "start_checkin"});
 
       if (_pendingBooking != null) {
@@ -358,6 +357,13 @@ class _IdScannerScreenState extends State<IdScannerScreen>
           },
         });
       }
+
+      // ✅ RETOUR AU SPLASH APRÈS 3 SECONDES
+      await Future.delayed(const Duration(seconds: 3));
+      if (mounted) {
+        widget.onReturnToSplash?.call();
+      }
+
     } on PlatformException catch (e) {
       if (!mounted) return;
       setState(() => _isWritingNfc = false);
@@ -366,7 +372,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       await _speak("Erreur, veuillez réessayer.");
     }
   }
-
   void _showSnackBar(String msg, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

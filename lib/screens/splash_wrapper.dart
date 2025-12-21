@@ -665,28 +665,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                           ),
                         ),
                       ),
-                      const SizedBox(height: 60),
-                      ScaleTransition(
-                        scale: _pulseAnimation,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: const [
-                              Icon(Icons.touch_app, color: Colors.white70, size: 20),
-                              SizedBox(width: 10),
-                              Text(
-                                "Appuyez pour commencer",
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.white70,
-                                  fontWeight: FontWeight.w400,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
                     ],
                   ),
                 ),

@@ -476,7 +476,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
               child: Text(
                 _isDetecting
                     ? '📸 Document détecté ! Photo dans $_countdown...'
-                    : '📄 Placez votre document dans le cadre',
+                    : '📄 Placez votre pièce dans le cadre',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Colors.white,

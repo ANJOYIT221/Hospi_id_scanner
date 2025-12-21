@@ -1,6 +1,7 @@
 // lib/services/ocr_service.dart
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/services.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:mrz_parser/mrz_parser.dart';
 import 'package:http/http.dart' as http;
@@ -13,13 +14,8 @@ class OCRService {
   final String model;
   final String kOpenAIHardcodedKey = dotenv.env['OPENAI_API_KEY'] ?? '';
 
-  OCRService({
-    this.useAiPostProcess = true,
-    this.model = "gpt-4o-mini",
-  });
-
-  // ✅ DICTIONNAIRE DES PRÉNOMS FRANÇAIS FRÉQUENTS
-  static const Set<String> _commonFrenchNames = {
+  // ✅ PRÉNOMS chargés depuis le fichier
+  static Set<String> _commonFrenchNames = {
     'MARIE', 'JEAN', 'PIERRE', 'MICHEL', 'ANDRÉ', 'PHILIPPE', 'ALAIN',
     'JACQUES', 'BERNARD', 'CHRISTIAN', 'DANIEL', 'PAUL', 'NICOLAS',
     'FRANÇOIS', 'FRÉDÉRIC', 'STÉPHANE', 'LAURENT', 'PATRICK', 'CHRISTOPHE',
@@ -33,6 +29,37 @@ class OCRService {
     'JOSÉ', 'RENÉ', 'RAPHAËL', 'MICHAËL', 'JOËL', 'GAËL',
   };
 
+  static bool _prenomsLoaded = false;
+
+  OCRService({
+    this.useAiPostProcess = true,
+    this.model = "gpt-4o-mini",
+  }) {
+    if (!_prenomsLoaded) {
+      _loadPrenomsFromFile();
+    }
+  }
+
+  // ✅ CHARGEMENT DES PRÉNOMS DEPUIS LE FICHIER
+  static Future<void> _loadPrenomsFromFile() async {
+    try {
+      final String fileContent = await rootBundle.loadString('assets/prenoms.txt');
+      final List<String> lines = fileContent.split('\n');
+
+      for (final line in lines) {
+        final trimmed = line.trim().toUpperCase();
+        if (trimmed.isNotEmpty) {
+          _commonFrenchNames.add(trimmed);
+        }
+      }
+
+      _prenomsLoaded = true;
+      print('✅ ${_commonFrenchNames.length} prénoms chargés');
+    } catch (e) {
+      print('⚠️ Impossible de charger prenoms.txt: $e');
+    }
+  }
+
   Future<Map<String, String>> scanTextFromImage(File imageFile) async {
     final inputImage = InputImage.fromFile(imageFile);
     final textRecognizer = GoogleMlKit.vision.textRecognizer();
@@ -42,11 +69,9 @@ class OCRService {
       final fullText = recognizedText.text;
       print('🔍 OCR brut :\n$fullText');
 
-      // ✅ PRÉ-CORRECTION des erreurs OCR communes
       final correctedText = _correctCommonOcrErrors(fullText);
       print('🔧 OCR corrigé :\n$correctedText');
 
-      // 1) MRZ
       final mrzMap = _tryMRZ(correctedText);
       if (mrzMap.isNotEmpty) {
         print('📤 MRZ trouvée → $mrzMap');
@@ -54,7 +79,6 @@ class OCRService {
         return await _maybeAiRefine(correctedText, base);
       }
 
-      // 2) Titre de séjour FR
       final sejour = _extractFrenchResidencePermit(correctedText);
       if (sejour.isNotEmpty) {
         print('📤 Titre de séjour → $sejour');
@@ -62,7 +86,6 @@ class OCRService {
         return await _maybeAiRefine(correctedText, base);
       }
 
-      // 3) Nouvelle CNI FR (sans MRZ)
       final newCni = _extractNewFrenchID(correctedText);
       if (newCni.isNotEmpty) {
         print('📤 Nouvelle CNI → $newCni');
@@ -70,7 +93,6 @@ class OCRService {
         return await _maybeAiRefine(correctedText, base);
       }
 
-      // 4) Fallback strict
       final classic = _extractDataFromText(correctedText);
       print('📤 Fallback labels → $classic');
       final base = _withDefaultsAndClean(classic);
@@ -82,47 +104,33 @@ class OCRService {
 
   /* ========================= CORRECTION ERREURS OCR ========================= */
 
-  /// ✅ Corrige les erreurs OCR typiques avec les accents français
   String _correctCommonOcrErrors(String text) {
     String corrected = text;
 
-    // Corrections de patterns OCR → Accents
     final corrections = {
-      // é mal lu
-      'ae': 'é',    // Saevine → Séverine
-      'ee': 'ée',   // Andreee → Andrée
-      'é0': 'é',    // erreur avec chiffre 0
-
-      // è mal lu
+      'ae': 'é',
+      'ee': 'ée',
+      'é0': 'é',
       'è0': 'è',
       'e`': 'è',
-
-      // à mal lu
       'à0': 'à',
       'a`': 'à',
-
-      // ô mal lu
       'ô0': 'ô',
       'o^': 'ô',
-
-      // ç mal lu
       'c,': 'ç',
       'ç0': 'ç',
     };
 
-    // Application des corrections par mot
     final words = corrected.split(RegExp(r'\s+'));
     final correctedWords = <String>[];
 
     for (var word in words) {
       String correctedWord = word;
 
-      // Vérifier si le mot ressemble à un prénom mal lu
       for (final entry in corrections.entries) {
         if (correctedWord.toLowerCase().contains(entry.key)) {
           final testWord = correctedWord.toLowerCase().replaceAll(entry.key, entry.value);
 
-          // Vérifier si la correction donne un prénom connu
           if (_commonFrenchNames.contains(testWord.toUpperCase())) {
             correctedWord = testWord;
             print('✅ Correction OCR: $word → $correctedWord');
@@ -137,7 +145,6 @@ class OCRService {
     return correctedWords.join(' ');
   }
 
-  /// ✅ Calcule la distance de Levenshtein (similarité entre 2 mots)
   int _levenshteinDistance(String s1, String s2) {
     if (s1 == s2) return 0;
     if (s1.isEmpty) return s2.length;
@@ -160,7 +167,6 @@ class OCRService {
     return v0[s2.length];
   }
 
-  /// ✅ Trouve le prénom français le plus proche
   String? _findClosestFrenchName(String input) {
     if (input.length < 3) return null;
 
@@ -171,7 +177,6 @@ class OCRService {
     for (final name in _commonFrenchNames) {
       final distance = _levenshteinDistance(inputUpper, name);
 
-      // Si distance <= 2, c'est probablement le bon prénom
       if (distance < bestDistance && distance <= 2) {
         bestDistance = distance;
         bestMatch = name;
@@ -204,11 +209,9 @@ class OCRService {
     return _postProcessWithDictionary(base);
   }
 
-  /// ✅ Post-traitement avec dictionnaire de prénoms
   Map<String, String> _postProcessWithDictionary(Map<String, String> data) {
     final result = Map<String, String>.from(data);
 
-    // Correction des prénoms
     final prenoms = result['prenoms'] ?? '';
     if (prenoms.isNotEmpty && prenoms != 'INCONNU') {
       final words = prenoms.split(RegExp(r'\s+'));
@@ -223,7 +226,6 @@ class OCRService {
       result['givenNames'] = correctedWords.join(' ');
     }
 
-    // Correction du nom
     final nom = result['nom'] ?? '';
     if (nom.isNotEmpty && nom != 'INCONNU') {
       final corrected = _findClosestFrenchName(nom);
@@ -253,10 +255,6 @@ ERREURS OCR FRÉQUENTES À CORRIGER :
 - "è" confondu avec "e`"
 - Espaces manquants entre prénoms
 
-PRÉNOMS FRANÇAIS COURANTS (pour validation) :
-Séverine, Stéphanie, Frédéric, Sébastien, Jérôme, Cédric, Éric, Hélène, 
-Céline, Valérie, Françoise, José, André, Raphaël, Michaël, Amélie, Léa, Zoé, Chloé
-
 INSTRUCTIONS :
 1. Détecte et corrige les erreurs OCR typiques
 2. Vérifie que les prénoms correspondent à des prénoms français réels
@@ -281,8 +279,6 @@ $ocrText
 
 Base JSON (pré-rempli, CORRIGE LES ERREURS OCR) :
 ${jsonEncode(current)}
-
-ATTENTION : Si tu vois "Saevine", c'est "Séverine" !
 ''';
 
     final body = {
