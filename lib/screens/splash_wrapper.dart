@@ -1,5 +1,6 @@
 // =======================
 // splash_wrapper.dart (Scanner) - Navigation automatique dès connexion
+// ✅ CORRIGÉ : Le scanner crée sa propre connexion WebSocket
 // =======================
 
 import 'dart:convert';
@@ -30,13 +31,14 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   late Animation<double> _pulseAnimation;
   late Animation<double> _connectionPulseAnimation;
 
-  // WebSocket partagé avec l'écran scanner
+  // ✅ WebSocket PARTAGÉ (utilisé par splash ET scanner)
   WebSocket? _socket;
+  Stream<dynamic>? _broadcastStream; // ← Broadcast stream partagé
   bool _isConnected = false;
   String _receiverIP = "0.0.0.0";
   int _receiverPort = 3000;
 
-  // ✅ NOUVEAU : Flag pour navigation automatique (une seule fois)
+  // ✅ Flag pour navigation automatique (une seule fois)
   bool _autoNavigated = false;
 
   // Discovery
@@ -244,7 +246,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   }
 
   // -------------------------------------------------
-  // WEBSOCKET
+  // WEBSOCKET (PARTAGÉ - utilisé par splash ET scanner)
   // -------------------------------------------------
   Future<void> _connectWebSocket() async {
     if (_receiverIP == "0.0.0.0" || _receiverIP.trim().isEmpty) {
@@ -255,11 +257,14 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     for (;;) {
       try {
         final uri = 'ws://$_receiverIP:$_receiverPort';
-        print("🔗 Connexion WebSocket sur $uri …");
+        print("🔗 [SPLASH] Connexion WebSocket sur $uri …");
         _socket = await WebSocket.connect(uri);
 
         setState(() => _isConnected = true);
-        print("✅ WebSocket connecté");
+        print("✅ [SPLASH] WebSocket connecté");
+
+        // ✅ CONVERTIR EN BROADCAST STREAM (permet plusieurs listeners)
+        _broadcastStream = _socket!.asBroadcastStream();
 
         // ✅ NAVIGATION AUTOMATIQUE DÈS CONNEXION
         if (!_autoNavigated && mounted) {
@@ -273,7 +278,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           });
         }
 
-        _socket!.listen(
+        // ✅ Le splash écoute aussi le stream
+        _broadcastStream!.listen(
               (msg) {
             final data = jsonDecode(msg);
             if (data is Map && data["action"] == "start_checkin") {
@@ -281,18 +287,24 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
             }
           },
           onDone: () {
-            setState(() => _isConnected = false);
-            print("🔌 WebSocket déconnecté");
+            setState(() {
+              _isConnected = false;
+              _broadcastStream = null;
+            });
+            print("🔌 [SPLASH] WebSocket déconnecté");
             _reconnect();
           },
           onError: (_) {
-            setState(() => _isConnected = false);
+            setState(() {
+              _isConnected = false;
+              _broadcastStream = null;
+            });
             _reconnect();
           },
         );
         break;
       } catch (e) {
-        print("❌ WebSocket impossible ($e). Pause 2s…");
+        print("❌ [SPLASH] WebSocket impossible ($e). Pause 2s…");
         await Future.delayed(const Duration(seconds: 2));
         if (_receiverIP == "0.0.0.0") return;
       }
@@ -470,8 +482,10 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       child: Scaffold(
         body: showLanding
             ? _buildSplashScreen()
+        // ✅ Passe le broadcast stream ET le WebSocket (UNE SEULE SOCKET!)
             : IdScannerScreen(
-          socket: _socket,
+          broadcastStream: _broadcastStream,
+          webSocket: _socket,
           isConnected: _isConnected,
           onReturnToSplash: _returnToSplash,
         ),
