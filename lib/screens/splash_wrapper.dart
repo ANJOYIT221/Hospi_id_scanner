@@ -1,12 +1,13 @@
 // =======================
-// splash_wrapper.dart (Scanner) - Navigation automatique dès connexion
-// ✅ CORRIGÉ : Le scanner crée sa propre connexion WebSocket
+// splash_wrapper.dart (Scanner) - Cache IP pour optimiser découverte UDP
+// ✅ CORRIGÉ : Cache utilisé uniquement pour accélérer la découverte UDP
 // =======================
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'id_scanner_screen.dart';
 
 class SplashWrapper extends StatefulWidget {
@@ -31,19 +32,20 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   late Animation<double> _pulseAnimation;
   late Animation<double> _connectionPulseAnimation;
 
-  // ✅ WebSocket PARTAGÉ (utilisé par splash ET scanner)
   WebSocket? _socket;
-  Stream<dynamic>? _broadcastStream; // ← Broadcast stream partagé
+  Stream<dynamic>? _broadcastStream;
   bool _isConnected = false;
   String _receiverIP = "0.0.0.0";
   int _receiverPort = 3000;
 
-  // ✅ Flag pour navigation automatique (une seule fois)
   bool _autoNavigated = false;
 
-  // Discovery
+  static const String _cachedIpKey = 'cached_receiver_ip';
+  static const String _cachedPortKey = 'cached_receiver_port';
+  static const String _cachedMacKey = 'cached_receiver_mac';
+
   static const int _discoveryPort = 3001;
-  static const String _wantedMac = "DC:62:94:38:3C:C0"; // laisser vide "" pour 1er trouvé
+  static const String _wantedMac = "DC:62:94:38:3C:C0";
   static final InternetAddress _mcastAddr = InternetAddress('239.255.255.250');
   RawDatagramSocket? _mcastListenSocket;
 
@@ -83,9 +85,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     Future.delayed(const Duration(milliseconds: 600), () => _slideController.forward());
   }
 
-  // -------------------------------------------------
-  // NET HELPERS
-  // -------------------------------------------------
   Future<String?> _getLocalIPv4() async {
     final ifaces = await NetworkInterface.list(
       type: InternetAddressType.IPv4,
@@ -109,9 +108,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     return InternetAddress('255.255.255.255');
   }
 
-  // -------------------------------------------------
-  // MULTICAST LISTENER (heartbeat)
-  // -------------------------------------------------
   Future<void> _startMulticastListener() async {
     try {
       _mcastListenSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
@@ -155,9 +151,22 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     }
   }
 
-  // -------------------------------------------------
-  // DISCOVERY (broadcast UDP)
-  // -------------------------------------------------
+  Future<void> _saveConnection({String? mac}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cachedIpKey, _receiverIP);
+      await prefs.setInt(_cachedPortKey, _receiverPort);
+
+      if (mac != null) {
+        await prefs.setString(_cachedMacKey, mac);
+      }
+
+      print('💾 Connexion sauvegardée en cache: $_receiverIP:$_receiverPort (MAC: ${mac ?? "non spécifié"})');
+    } catch (e) {
+      print('❌ Erreur sauvegarde connexion: $e');
+    }
+  }
+
   Future<Map<String, Map<String, dynamic>>> discoverReceivers({
     int timeoutSeconds = 3,
     int repeats = 3,
@@ -177,6 +186,28 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         'action': 'DISCOVER_LOUNA',
         'time': DateTime.now().toIso8601String(),
       }));
+
+      final prefs = await SharedPreferences.getInstance();
+      final cachedIp = prefs.getString(_cachedIpKey);
+      final cachedPort = prefs.getInt(_cachedPortKey);
+
+      if (cachedIp != null && cachedPort != null) {
+        print('📦 Cache trouvé: $cachedIp:$cachedPort');
+        print('🎯 Envoi requête UDP directe à l\'IP en cache...');
+
+        try {
+          final cachedAddr = InternetAddress(cachedIp);
+          socket.send(reqBytes, cachedAddr, _discoveryPort);
+          await Future.delayed(const Duration(milliseconds: 100));
+          socket.send(reqBytes, cachedAddr, _discoveryPort);
+
+          print('✅ Requête UDP envoyée au cache, attente réponse...');
+        } catch (e) {
+          print('⚠️ Erreur envoi UDP au cache: $e');
+        }
+      } else {
+        print('ℹ️ Aucun cache trouvé');
+      }
 
       for (int i = 0; i < repeats; i++) {
         socket.send(reqBytes, bcastNet, _discoveryPort);
@@ -204,7 +235,12 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
             if (mac != null && mac.isNotEmpty) {
               results[mac] = {'ip': ip, 'port': port, 'raw': parsed};
-              print("🔍 Découverte: mac=$mac ip=$ip port=$port");
+
+              if (ip == cachedIp && port == cachedPort) {
+                print("✅ L'IP en cache a répondu ! ($ip:$port)");
+              } else {
+                print("🔍 Découverte: mac=$mac ip=$ip port=$port");
+              }
             }
           } catch (_) {}
         }
@@ -222,19 +258,22 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   }
 
   Future<void> _runDiscoveryAndConnect() async {
-    print("🔎 Lancement découverte UDP…");
+    print("🔎 Lancement découverte UDP (avec cache si disponible)…");
     final discovered = await discoverReceivers(timeoutSeconds: 3, repeats: 3);
+
     if (discovered.isEmpty) {
-      print("😕 Aucun récepteur trouvé (broadcast).");
+      print("😕 Aucun récepteur trouvé.");
       return;
     }
 
     String selectedIp = discovered.values.first['ip'];
     int selectedPort = discovered.values.first['port'];
+    String? selectedMac = discovered.keys.first;
 
     if (_wantedMac.isNotEmpty && discovered.containsKey(_wantedMac)) {
       selectedIp = discovered[_wantedMac]!['ip'];
       selectedPort = discovered[_wantedMac]!['port'];
+      selectedMac = _wantedMac;
       print("✅ Récepteur ciblé: $_wantedMac → $selectedIp:$selectedPort");
     }
 
@@ -242,12 +281,14 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       _receiverIP = selectedIp;
       _receiverPort = selectedPort;
     });
+
     await _connectWebSocket();
+
+    if (_isConnected) {
+      await _saveConnection(mac: selectedMac);
+    }
   }
 
-  // -------------------------------------------------
-  // WEBSOCKET (PARTAGÉ - utilisé par splash ET scanner)
-  // -------------------------------------------------
   Future<void> _connectWebSocket() async {
     if (_receiverIP == "0.0.0.0" || _receiverIP.trim().isEmpty) {
       print("⏭️ IP inconnue, on ne tente pas la connexion.");
@@ -263,13 +304,10 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         setState(() => _isConnected = true);
         print("✅ [SPLASH] WebSocket connecté");
 
-        // ✅ CONVERTIR EN BROADCAST STREAM (permet plusieurs listeners)
         _broadcastStream = _socket!.asBroadcastStream();
 
-        // ✅ NAVIGATION AUTOMATIQUE DÈS CONNEXION
         if (!_autoNavigated && mounted) {
           _autoNavigated = true;
-          // Petit délai pour l'animation de l'indicateur
           Future.delayed(const Duration(milliseconds: 800), () {
             if (mounted && showLanding) {
               print("🚀 Navigation automatique vers IdScannerScreen");
@@ -278,7 +316,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           });
         }
 
-        // ✅ Le splash écoute aussi le stream
         _broadcastStream!.listen(
               (msg) {
             final data = jsonDecode(msg);
@@ -315,9 +352,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     if (mounted) _connectWebSocket();
   }
 
-  // -------------------------------------------------
-  // Connexion manuelle
-  // -------------------------------------------------
   Future<void> _promptManualConnect() async {
     final ipCtl = TextEditingController(text: _receiverIP == "0.0.0.0" ? "" : _receiverIP);
     final portCtl = TextEditingController(text: _receiverPort.toString());
@@ -441,9 +475,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     );
   }
 
-  // -------------------------------------------------
-  // Navigation
-  // -------------------------------------------------
   void _handleTap() {
     setState(() {
       showLanding = false;
@@ -453,13 +484,10 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   void _returnToSplash() {
     setState(() {
       showLanding = true;
-      _autoNavigated = false; // ✅ Réinitialiser pour permettre une nouvelle navigation automatique
+      _autoNavigated = false;
     });
   }
 
-  // -------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------
   @override
   void dispose() {
     _fadeController.dispose();
@@ -472,9 +500,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     super.dispose();
   }
 
-  // -------------------------------------------------
-  // UI
-  // -------------------------------------------------
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -482,7 +507,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       child: Scaffold(
         body: showLanding
             ? _buildSplashScreen()
-        // ✅ Passe le broadcast stream ET le WebSocket (UNE SEULE SOCKET!)
             : IdScannerScreen(
           broadcastStream: _broadcastStream,
           webSocket: _socket,
@@ -496,7 +520,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   Widget _buildSplashScreen() {
     return Stack(
       children: [
-        // Background gradient
         Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -510,8 +533,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
             ),
           ),
         ),
-
-        // ===== Connection status (compact) — top right =====
         Positioned(
           top: 28,
           right: 14,
@@ -599,8 +620,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
             ),
           ),
         ),
-
-        // Main content (logo + titres + invite "appuyez pour commencer")
         Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,

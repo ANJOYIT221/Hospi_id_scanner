@@ -14,7 +14,6 @@ class OCRService {
   final String model;
   final String kOpenAIHardcodedKey = dotenv.env['OPENAI_API_KEY'] ?? '';
 
-  // ✅ PRÉNOMS chargés depuis le fichier
   static Set<String> _commonFrenchNames = {
     'MARIE', 'JEAN', 'PIERRE', 'MICHEL', 'ANDRÉ', 'PHILIPPE', 'ALAIN',
     'JACQUES', 'BERNARD', 'CHRISTIAN', 'DANIEL', 'PAUL', 'NICOLAS',
@@ -27,9 +26,86 @@ class OCRService {
     'SÉVERINE', 'HÉLÈNE', 'DELPHINE', 'STÉPHANIE', 'BÉATRICE', 'BRIGITTE',
     'AGNÈS', 'MÉLANIE', 'ÉLISE', 'AMÉLIE', 'LÉA', 'ZOÉ', 'CHLOÉ',
     'JOSÉ', 'RENÉ', 'RAPHAËL', 'MICHAËL', 'JOËL', 'GAËL',
+    'LOUNA', 'EMMA', 'JADE', 'LOUISE', 'ALICE', 'INÈS',
   };
 
   static bool _prenomsLoaded = false;
+
+  static const Map<String, String> _encodingFixMap = {
+    'ã©': 'é',
+    'ã¨': 'è',
+    'ãª': 'ê',
+    'ã ': 'à',
+    'ã§': 'ç',
+    'ã´': 'ô',
+    'ã®': 'î',
+    'ã¯': 'ï',
+    'ã¹': 'ù',
+    'ã»': 'û',
+    'ã¼': 'ü',
+    'Ã©': 'é',
+    'Ã¨': 'è',
+    'Ãª': 'ê',
+    'Ã ': 'à',
+    'Ã§': 'ç',
+    'Ã´': 'ô',
+    'Ã®': 'î',
+    'Ã¯': 'ï',
+    'Ã¹': 'ù',
+    'Ã»': 'û',
+    'Ã¼': 'ü',
+  };
+
+  static const Map<String, String> _accentFixMap = {
+    'ae': 'é',
+    'ee': 'é',
+    'e0': 'é',
+    'é0': 'é',
+    'e9': 'é',
+    'ea': 'é',
+    'eg': 'é',
+    'e`': 'è',
+    'è0': 'è',
+    'e8': 'è',
+    'e^': 'ê',
+    'ê0': 'ê',
+    'e6': 'ê',
+    'a`': 'à',
+    'à0': 'à',
+    'ao': 'à',
+    'a8': 'à',
+    'a0': 'à',
+    'c,': 'ç',
+    'ç0': 'ç',
+    'c0': 'ç',
+    'co': 'ç',
+    'c.': 'ç',
+    'o^': 'ô',
+    'ô0': 'ô',
+    'o0': 'ô',
+    'oo': 'ô',
+    'o6': 'ô',
+    'i^': 'î',
+    'î0': 'î',
+    'i0': 'î',
+    'i6': 'î',
+    'i:': 'ï',
+    'ï0': 'ï',
+    'i.': 'ï',
+    'u`': 'ù',
+    'ù0': 'ù',
+    'u0': 'ù',
+    'u8': 'ù',
+    'u^': 'û',
+    'û0': 'û',
+    'u6': 'û',
+    'u:': 'ü',
+    'ü0': 'ü',
+    'oe': 'œ',
+    '0e': 'œ',
+    'ée': 'ée',
+    'éé': 'ée',
+  };
 
   OCRService({
     this.useAiPostProcess = true,
@@ -40,7 +116,6 @@ class OCRService {
     }
   }
 
-  // ✅ CHARGEMENT DES PRÉNOMS DEPUIS LE FICHIER
   static Future<void> _loadPrenomsFromFile() async {
     try {
       final String fileContent = await rootBundle.loadString('assets/prenoms.txt');
@@ -54,10 +129,23 @@ class OCRService {
       }
 
       _prenomsLoaded = true;
-      print('✅ ${_commonFrenchNames.length} prénoms chargés');
+      print('✅ ${_commonFrenchNames.length} prénoms chargés depuis prenoms.txt');
     } catch (e) {
       print('⚠️ Impossible de charger prenoms.txt: $e');
     }
+  }
+
+  String _fixEncoding(String text) {
+    String fixed = text;
+
+    for (final entry in _encodingFixMap.entries) {
+      if (fixed.contains(entry.key)) {
+        fixed = fixed.replaceAll(entry.key, entry.value);
+        print('🔧 Correction encodage: "${entry.key}" → "${entry.value}"');
+      }
+    }
+
+    return fixed;
   }
 
   Future<Map<String, String>> scanTextFromImage(File imageFile) async {
@@ -67,10 +155,19 @@ class OCRService {
     try {
       final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
       final fullText = recognizedText.text;
-      print('🔍 OCR brut :\n$fullText');
+      print('🔍 ========== OCR BRUT ==========');
+      print(fullText);
+      print('=====================================');
 
-      final correctedText = _correctCommonOcrErrors(fullText);
-      print('🔧 OCR corrigé :\n$correctedText');
+      final encodingFixed = _fixEncoding(fullText);
+      print('🔧 ========== ENCODAGE CORRIGÉ ==========');
+      print(encodingFixed);
+      print('=====================================');
+
+      final correctedText = _correctCommonOcrErrors(encodingFixed);
+      print('🔧 ========== OCR CORRIGÉ ==========');
+      print(correctedText);
+      print('=====================================');
 
       final mrzMap = _tryMRZ(correctedText);
       if (mrzMap.isNotEmpty) {
@@ -102,47 +199,60 @@ class OCRService {
     }
   }
 
-  /* ========================= CORRECTION ERREURS OCR ========================= */
-
   String _correctCommonOcrErrors(String text) {
-    String corrected = text;
-
-    final corrections = {
-      'ae': 'é',
-      'ee': 'ée',
-      'é0': 'é',
-      'è0': 'è',
-      'e`': 'è',
-      'à0': 'à',
-      'a`': 'à',
-      'ô0': 'ô',
-      'o^': 'ô',
-      'c,': 'ç',
-      'ç0': 'ç',
-    };
-
-    final words = corrected.split(RegExp(r'\s+'));
+    final words = text.split(RegExp(r'\s+'));
     final correctedWords = <String>[];
 
     for (var word in words) {
-      String correctedWord = word;
-
-      for (final entry in corrections.entries) {
-        if (correctedWord.toLowerCase().contains(entry.key)) {
-          final testWord = correctedWord.toLowerCase().replaceAll(entry.key, entry.value);
-
-          if (_commonFrenchNames.contains(testWord.toUpperCase())) {
-            correctedWord = testWord;
-            print('✅ Correction OCR: $word → $correctedWord');
-            break;
-          }
-        }
-      }
-
+      print('🔍 Analyse mot: "$word"');
+      String correctedWord = _fixAccents(word);
       correctedWords.add(correctedWord);
     }
 
     return correctedWords.join(' ');
+  }
+
+  String _fixAccents(String word) {
+    if (word.isEmpty || word.length < 3) {
+      print('   ⏭️ Mot trop court, ignoré');
+      return word;
+    }
+
+    String fixed = word.toLowerCase();
+    String original = fixed;
+    bool wasModified = false;
+
+    for (final entry in _accentFixMap.entries) {
+      if (fixed.contains(entry.key)) {
+        fixed = fixed.replaceAll(entry.key, entry.value);
+        wasModified = true;
+      }
+    }
+
+    if (wasModified) {
+      print('   🔧 Après correction accents: "$original" → "$fixed"');
+    }
+
+    final fixedUpper = fixed.toUpperCase();
+    if (_commonFrenchNames.contains(fixedUpper)) {
+      print('   ✅ Match exact trouvé: "$word" → "${_titleCase(fixed)}"');
+      return _titleCase(fixed);
+    }
+
+    if (wasModified || fixed.length >= 4) {
+      final fuzzyMatch = _findClosestFrenchName(fixed);
+      if (fuzzyMatch != null) {
+        return fuzzyMatch;
+      }
+    }
+
+    if (wasModified) {
+      print('   ⚠️ Aucun prénom trouvé, garde la correction: "${_titleCase(fixed)}"');
+      return _titleCase(fixed);
+    }
+
+    print('   ⏭️ Aucune correction: "$word"');
+    return word;
   }
 
   int _levenshteinDistance(String s1, String s2) {
@@ -168,7 +278,7 @@ class OCRService {
   }
 
   String? _findClosestFrenchName(String input) {
-    if (input.length < 3) return null;
+    if (input.length < 4) return null;
 
     final inputUpper = input.toUpperCase();
     String? bestMatch;
@@ -177,21 +287,34 @@ class OCRService {
     for (final name in _commonFrenchNames) {
       final distance = _levenshteinDistance(inputUpper, name);
 
-      if (distance < bestDistance && distance <= 2) {
+      if (distance == 1 && distance < bestDistance) {
         bestDistance = distance;
         bestMatch = name;
       }
     }
 
-    if (bestMatch != null && bestDistance <= 2) {
-      print('🔍 Prénom corrigé: $input → $bestMatch (distance: $bestDistance)');
-      return _titleCase(bestMatch);
+    if (bestMatch != null && bestDistance == 1) {
+      final similarity = _calculateSimilarity(inputUpper, bestMatch);
+      if (similarity >= 0.7) {
+        print('   🔍 Fuzzy match trouvé: "$input" → "$bestMatch" (distance: $bestDistance, similarité: ${(similarity * 100).toStringAsFixed(0)}%)');
+        return _titleCase(bestMatch);
+      } else {
+        print('   ⚠️ Match rejeté (similarité ${(similarity * 100).toStringAsFixed(0)}% < 70%): "$input" vs "$bestMatch"');
+      }
     }
 
     return null;
   }
 
-  /* ========================= IA OpenAI AMÉLIORÉE ========================= */
+  double _calculateSimilarity(String s1, String s2) {
+    final longer = s1.length > s2.length ? s1 : s2;
+    final shorter = s1.length > s2.length ? s2 : s1;
+
+    if (longer.isEmpty) return 1.0;
+
+    final distance = _levenshteinDistance(s1, s2);
+    return (longer.length - distance) / longer.length;
+  }
 
   Future<Map<String, String>> _maybeAiRefine(
       String ocr,
@@ -212,29 +335,42 @@ class OCRService {
   Map<String, String> _postProcessWithDictionary(Map<String, String> data) {
     final result = Map<String, String>.from(data);
 
+    print('🔍 ========== POST-TRAITEMENT ==========');
+
     final prenoms = result['prenoms'] ?? '';
     if (prenoms.isNotEmpty && prenoms != 'INCONNU') {
-      final words = prenoms.split(RegExp(r'\s+'));
+      print('📝 Prénoms avant: "$prenoms"');
+
+      final encodingFixed = _fixEncoding(prenoms);
+      print('🔧 Après correction encodage: "$encodingFixed"');
+
+      final words = encodingFixed.split(RegExp(r'\s+'));
       final correctedWords = <String>[];
 
       for (final word in words) {
-        final corrected = _findClosestFrenchName(word);
-        correctedWords.add(corrected ?? word);
+        final fixed = _fixAccents(word);
+        correctedWords.add(fixed);
       }
 
       result['prenoms'] = correctedWords.join(' ');
       result['givenNames'] = correctedWords.join(' ');
+      print('✅ Prénoms après: "${result['prenoms']}"');
     }
 
     final nom = result['nom'] ?? '';
     if (nom.isNotEmpty && nom != 'INCONNU') {
-      final corrected = _findClosestFrenchName(nom);
-      if (corrected != null) {
-        result['nom'] = corrected;
-        result['nomUsage'] = corrected;
-      }
+      print('📝 Nom avant: "$nom"');
+
+      final encodingFixed = _fixEncoding(nom);
+      print('🔧 Après correction encodage: "$encodingFixed"');
+
+      final fixed = _fixAccents(encodingFixed);
+      result['nom'] = fixed;
+      result['nomUsage'] = fixed;
+      print('✅ Nom après: "${result['nom']}"');
     }
 
+    print('=========================================');
     return result;
   }
 
@@ -247,38 +383,54 @@ class OCRService {
     final system = '''
 Tu es un expert en correction d'erreurs OCR sur des documents d'identité français.
 
-ERREURS OCR FRÉQUENTES À CORRIGER :
-- "ae" → "é" (ex: "Saevine" → "Séverine")
-- "ee" → "ée" (ex: "Andreee" → "Andrée")
-- "ç" confondu avec "c,"
-- "é" confondu avec "e0" ou "é0"
-- "è" confondu avec "e`"
-- Espaces manquants entre prénoms
+⚠️ ERREURS OCR FRÉQUENTES À CORRIGER ABSOLUMENT :
 
-INSTRUCTIONS :
-1. Détecte et corrige les erreurs OCR typiques
-2. Vérifie que les prénoms correspondent à des prénoms français réels
-3. PRÉSERVE TOUS LES ACCENTS français (é, è, ê, à, ç, ô, etc.)
-4. Conserve les MAJUSCULES pour les noms de famille
-5. Met les prénoms en Title Case (José, Séverine)
+ACCENTS É :
+- "ae" → "é" (Saevine → Séverine)
+- "ee" → "é" (Andree → André)
+- "e0" → "é" (Jose0 → José)
+
+ACCENTS È :
+- "e\`" → "è" (Helene\` → Hélène)
+
+CÉDILLE Ç :
+- "c," → "ç" (Franc,ois → François)
+
+ENCODAGE UTF-8 :
+- "ã©" → "é" (Sã©verine → Séverine)
+- "Ã©" → "é"
+
+INSTRUCTIONS STRICTES :
+1. Détecte et corrige UNIQUEMENT les erreurs OCR évidentes (accents manquants/mal reconnus)
+2. NE CHANGE PAS un prénom s'il est déjà lisible et cohérent
+3. PRÉSERVE TOUS LES ACCENTS français
+4. Ne substitue JAMAIS un prénom par un autre complètement différent
+5. Si un prénom est illisible, laisse-le tel quel plutôt que de deviner
+
+PRÉNOMS FRANÇAIS COURANTS (pour référence) :
+Marie, Jean, Pierre, Michel, André, Philippe, Jacques, Bernard, Paul, Nicolas, François,
+Nathalie, Isabelle, Sophie, Christine, Caroline, Julie, Stéphanie, Séverine, Hélène,
+Louna, Emma, Jade, Louise, Alice, Chloé, Inès
 
 Retourne EXCLUSIVEMENT un JSON avec :
-- nom (string, MAJUSCULES)
-- prenoms (string, Title Case avec accents corrects)
+- nom (string, MAJUSCULES, accents corrigés)
+- prenoms (string, Title Case avec accents corrigés)
 - idNumber (string)
-- nationalite (string, code ISO-3 type FRA, SEN)
+- nationalite (string, code ISO-3)
 - birthDate (string, JJ/MM/AAAA ou vide)
 - validUntil (string, JJ/MM/AAAA ou vide)
 ''';
 
     final user = '''
-OCR brut (contient des erreurs d'accents) :
+OCR brut :
 """
 $ocrText
 """
 
-Base JSON (pré-rempli, CORRIGE LES ERREURS OCR) :
+Base JSON (NE CHANGE QUE LES ERREURS D'ACCENTS ÉVIDENTES) :
 ${jsonEncode(current)}
+
+IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les accents mal lus !
 ''';
 
     final body = {
@@ -330,8 +482,6 @@ ${jsonEncode(current)}
     };
   }
 
-  /* ========================= MRZ ========================= */
-
   Map<String, String> _tryMRZ(String text) {
     final rawLines = text.split('\n');
     final lines = <String>[];
@@ -378,8 +528,6 @@ ${jsonEncode(current)}
       return {};
     }
   }
-
-  /* ===== TITRE DE SÉJOUR FR ===== */
 
   Map<String, String> _extractFrenchResidencePermit(String raw) {
     final rawLines = raw.split('\n');
@@ -518,8 +666,6 @@ ${jsonEncode(current)}
     };
   }
 
-  /* ================== Nouvelle CNI (sans MRZ) ================== */
-
   Map<String, String> _extractNewFrenchID(String txt) {
     final tUpper = _uc(txt);
     String nom = '', prenoms = '', id = '', nat = '', nomUsage = '';
@@ -575,8 +721,6 @@ ${jsonEncode(current)}
     }
     return {};
   }
-
-  /* ===================== Fallback strict ===================== */
 
   Map<String, String> _extractDataFromText(String txt) {
     final rawLines = txt.split('\n');
@@ -647,8 +791,6 @@ ${jsonEncode(current)}
       'nationalite': nat.isNotEmpty ? nat : 'Inconnue',
     };
   }
-
-  /* ======================= Helpers ======================= */
 
   String _uc(String s) =>
       s.toUpperCase().replaceAll(RegExp(r'\s+'), ' ').trim();

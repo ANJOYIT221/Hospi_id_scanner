@@ -1,6 +1,6 @@
 // =======================
 // id_scanner_screen.dart - SCANNER PROPRE
-// OCR → Envoie données → Attend réservation → Grave NFC
+// OCR → Envoie données → Attend réservation → Grave NFC (avec réessai auto)
 // =======================
 
 import 'dart:async';
@@ -16,8 +16,8 @@ import 'package:image_picker/image_picker.dart';
 import '../services/ocr_service.dart';
 
 class IdScannerScreen extends StatefulWidget {
-  final Stream<dynamic>? broadcastStream; // ← Stream partagé pour RECEVOIR
-  final WebSocket? webSocket; // ← WebSocket pour ENVOYER
+  final Stream<dynamic>? broadcastStream;
+  final WebSocket? webSocket;
   final bool isConnected;
   final VoidCallback? onReturnToSplash;
 
@@ -43,7 +43,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   final MethodChannel _nfcChannel = const MethodChannel('com.hospi_id_scan.nfc');
 
   // ====== Réseau ======
-  // ✅ Pas de WebSocket ici - on utilise le broadcast stream partagé
   StreamSubscription<dynamic>? _streamSubscription;
   bool get _isConnected => widget.isConnected;
 
@@ -56,6 +55,11 @@ class _IdScannerScreenState extends State<IdScannerScreen>
 
   // ✅ Réservation reçue de la borne (à graver)
   Map<String, String>? _bookingToWrite;
+
+  // ✅ NOUVEAU : Gestion des réessais NFC
+  int _nfcWriteAttempts = 0;
+  static const int _maxNfcAttempts = 5;
+  Timer? _nfcRetryTimer;
 
   // ====== Animations ======
   late final AnimationController _fadeController;
@@ -104,9 +108,10 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   @override
   void dispose() {
     _inactivityTimer?.cancel();
+    _nfcRetryTimer?.cancel(); // ✅ Annuler le timer de réessai
     _tts.stop();
     _player.dispose();
-    _streamSubscription?.cancel(); // ✅ Annuler la subscription (pas fermer le socket)
+    _streamSubscription?.cancel();
     _fadeController.dispose();
     _slideController.dispose();
     _nfcController.dispose();
@@ -163,7 +168,7 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   }
 
   // ============================================
-  // 🆕 GESTION DES MESSAGES DE LA BORNE
+  // GESTION DES MESSAGES DE LA BORNE
   // ============================================
 
   void _handleBorneMessage(dynamic message) {
@@ -331,9 +336,9 @@ class _IdScannerScreenState extends State<IdScannerScreen>
     }
   }
 
-  // ==================== NFC ====================
+  // ==================== NFC AVEC RÉESSAI AUTO ====================
 
-  Future<void> _writeToNfc() async {
+  Future<void> _writeToNfc({bool isRetry = false}) async {
     _onUserActivity();
 
     if (_bookingToWrite == null) {
@@ -342,13 +347,33 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       return;
     }
 
-    print('🔥 ========== GRAVURE NFC ==========');
+    // ✅ Incrémenter le compteur de tentatives
+    if (!isRetry) {
+      _nfcWriteAttempts = 0;
+    }
+    _nfcWriteAttempts++;
+
+    // ✅ Vérifier le nombre max de tentatives
+    if (_nfcWriteAttempts > _maxNfcAttempts) {
+      print('❌ Nombre maximum de tentatives atteint ($_maxNfcAttempts)');
+      setState(() => _isWritingNfc = false);
+      _nfcController.reverse();
+      _showSnackBar("❌ Échec après $_maxNfcAttempts tentatives. Contactez le personnel.", errorRed);
+      await _speak("La gravure a échoué après plusieurs tentatives. Veuillez contacter le personnel.");
+      return;
+    }
+
+    print('🔥 ========== GRAVURE NFC (Tentative $_nfcWriteAttempts/$_maxNfcAttempts) ==========');
     print('📝 Réservation: ${_bookingToWrite!['surname']} ${_bookingToWrite!['name']}');
 
     setState(() => _isWritingNfc = true);
     _nfcController.forward();
 
-    await _speak("Approchez la carte fournie de la zone orange.");
+    if (_nfcWriteAttempts == 1) {
+      await _speak("Approchez la carte fournie de la zone orange.");
+    } else {
+      await _speak("Tentative $_nfcWriteAttempts. Approchez de nouveau la carte.");
+    }
 
     final jsonText = jsonEncode(_bookingToWrite);
 
@@ -356,8 +381,12 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       await _nfcChannel.invokeMethod('writeTag', {'text': jsonText});
 
       if (!mounted) return;
-      setState(() => _isWritingNfc = false);
+      setState(() {
+        _isWritingNfc = false;
+        _nfcWriteAttempts = 0; // ✅ Réinitialiser le compteur
+      });
       _nfcController.reverse();
+      _nfcRetryTimer?.cancel(); // ✅ Annuler le timer si succès
 
       print('✅ Gravure NFC réussie !');
       _showSnackBar("✅ Carte de chambre obtenue !", successGreen);
@@ -382,20 +411,45 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       setState(() => _isWritingNfc = false);
       _nfcController.reverse();
 
-      print('❌ Erreur NFC: ${e.message}');
-      _showSnackBar("❌ Erreur NFC : ${e.message}", errorRed);
-      await _speak("Erreur, veuillez réessayer.");
+      print('❌ Erreur NFC (Tentative $_nfcWriteAttempts/$_maxNfcAttempts): ${e.message}');
+
+      // ✅ RÉESSAI AUTOMATIQUE
+      _showSnackBar(
+        "⏳ Réessai dans 2 secondes... ($_nfcWriteAttempts/$_maxNfcAttempts)",
+        warningAmber,
+      );
+
+      _nfcRetryTimer?.cancel();
+      _nfcRetryTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) {
+          print('🔄 Réessai automatique de la gravure NFC...');
+          _writeToNfc(isRetry: true);
+        }
+      });
 
     } catch (e) {
       if (!mounted) return;
       setState(() => _isWritingNfc = false);
       _nfcController.reverse();
 
-      print('❌ Erreur inattendue: $e');
-      _showSnackBar("❌ Erreur : $e", errorRed);
+      print('❌ Erreur inattendue (Tentative $_nfcWriteAttempts/$_maxNfcAttempts): $e');
+
+      // ✅ RÉESSAI AUTOMATIQUE
+      _showSnackBar(
+        "⏳ Erreur inattendue. Réessai... ($_nfcWriteAttempts/$_maxNfcAttempts)",
+        warningAmber,
+      );
+
+      _nfcRetryTimer?.cancel();
+      _nfcRetryTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) {
+          print('🔄 Réessai automatique après erreur...');
+          _writeToNfc(isRetry: true);
+        }
+      });
     }
 
-    print('🔥 ========== FIN GRAVURE ==========');
+    print('🔥 ========== FIN TENTATIVE $_nfcWriteAttempts ==========');
   }
 
   void _showSnackBar(String msg, Color color) {
@@ -457,6 +511,11 @@ class _IdScannerScreenState extends State<IdScannerScreen>
                     if (_extracted != null && !_isProcessing) ...[
                       const SizedBox(height: 12),
                       _buildExtractedCard(),
+                    ],
+                    // ✅ Indicateur de gravure NFC avec nombre de tentatives
+                    if (_isWritingNfc) ...[
+                      const SizedBox(height: 12),
+                      _buildNfcWritingCard(),
                     ],
                     const SizedBox(height: 90),
                   ],
@@ -713,6 +772,58 @@ class _IdScannerScreenState extends State<IdScannerScreen>
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ✅ NOUVEAU : Indicateur de gravure NFC avec tentatives
+  Widget _buildNfcWritingCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: cardWhite,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: warningAmber.withOpacity(0.3), width: 2),
+        boxShadow: [BoxShadow(color: warningAmber.withOpacity(0.12), blurRadius: 16, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.nfc, color: warningAmber, size: 24),
+              SizedBox(width: 10),
+              Text("Gravure NFC en cours...", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: textDark)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const SizedBox(
+            width: 64,
+            height: 64,
+            child: CircularProgressIndicator(
+              strokeWidth: 5,
+              valueColor: AlwaysStoppedAnimation<Color>(warningAmber),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            "Tentative $_nfcWriteAttempts/$_maxNfcAttempts",
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: _nfcWriteAttempts > 3 ? errorRed : textMuted,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            "Approchez la carte de la zone NFC",
+            style: TextStyle(
+              fontSize: 12,
+              color: textMuted,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
