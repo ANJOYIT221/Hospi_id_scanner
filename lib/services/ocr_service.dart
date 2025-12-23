@@ -1,4 +1,5 @@
 // lib/services/ocr_service.dart
+// ✅ OPTIMISÉ : Fuzzy matching réduit, corrections d'accents gardées, OpenAI activé
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -239,8 +240,9 @@ class OCRService {
       return _titleCase(fixed);
     }
 
+    // ✅ OPTIMISATION : Fuzzy matching réduit
     if (wasModified || fixed.length >= 4) {
-      final fuzzyMatch = _findClosestFrenchName(fixed);
+      final fuzzyMatch = _findClosestFrenchNameOptimized(fixed);
       if (fuzzyMatch != null) {
         return fuzzyMatch;
       }
@@ -277,29 +279,32 @@ class OCRService {
     return v0[s2.length];
   }
 
-  String? _findClosestFrenchName(String input) {
+  // ✅ NOUVELLE MÉTHODE OPTIMISÉE : Fuzzy matching réduit
+  String? _findClosestFrenchNameOptimized(String input) {
     if (input.length < 4) return null;
 
     final inputUpper = input.toUpperCase();
-    String? bestMatch;
-    int bestDistance = 999;
+
+    // ✅ OPTIMISATION 1 : On cherche uniquement les noms qui ont une distance de 1
+    const int MAX_DISTANCE = 1;
+
+    // ✅ OPTIMISATION 2 : Similarité minimale augmentée à 80%
+    const double MIN_SIMILARITY = 0.8;
 
     for (final name in _commonFrenchNames) {
+      // ✅ OPTIMISATION 3 : Skip les noms trop différents en longueur
+      final lengthDiff = (inputUpper.length - name.length).abs();
+      if (lengthDiff > MAX_DISTANCE) continue;
+
       final distance = _levenshteinDistance(inputUpper, name);
 
-      if (distance == 1 && distance < bestDistance) {
-        bestDistance = distance;
-        bestMatch = name;
-      }
-    }
-
-    if (bestMatch != null && bestDistance == 1) {
-      final similarity = _calculateSimilarity(inputUpper, bestMatch);
-      if (similarity >= 0.7) {
-        print('   🔍 Fuzzy match trouvé: "$input" → "$bestMatch" (distance: $bestDistance, similarité: ${(similarity * 100).toStringAsFixed(0)}%)');
-        return _titleCase(bestMatch);
-      } else {
-        print('   ⚠️ Match rejeté (similarité ${(similarity * 100).toStringAsFixed(0)}% < 70%): "$input" vs "$bestMatch"');
+      // ✅ OPTIMISATION 4 : Arrêt dès qu'on trouve un match valide
+      if (distance == MAX_DISTANCE) {
+        final similarity = _calculateSimilarity(inputUpper, name);
+        if (similarity >= MIN_SIMILARITY) {
+          print('   🔍 Fuzzy match trouvé: "$input" → "$name" (distance: $distance, similarité: ${(similarity * 100).toStringAsFixed(0)}%)');
+          return _titleCase(name);
+        }
       }
     }
 

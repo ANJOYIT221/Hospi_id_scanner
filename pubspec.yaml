@@ -30,7 +30,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_tts: ^4.2.2
   shared_preferences: ^2.2.2  # ← AJOUTÉ pour le cache IP
-
+  # ✅ NOUVELLES - À AJOUTER
+  image: ^4.1.7  # Prétraitement d'image
 dev_dependencies:
   flutter_test:
     sdk: flutter
