@@ -1,6 +1,5 @@
 // =======================
-// splash_wrapper.dart (Scanner) - Cache IP pour optimiser découverte UDP
-// ✅ CORRIGÉ : Cache utilisé uniquement pour accélérer la découverte UDP
+// splash_wrapper.dart (Scanner) - VERSION DE BASE + UI AMÉLIORÉE
 // =======================
 
 import 'dart:convert';
@@ -352,6 +351,31 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     if (mounted) _connectWebSocket();
   }
 
+  // ============================================
+  // 🆕 BOUTON RÉESSAYER AVEC CACHE
+  // ============================================
+
+  Future<void> _retryWithCache() async {
+    print('🔄 Réessai connexion avec cache...');
+
+    final prefs = await SharedPreferences.getInstance();
+    final cachedIp = prefs.getString(_cachedIpKey);
+    final cachedPort = prefs.getInt(_cachedPortKey);
+
+    if (cachedIp != null && cachedPort != null) {
+      setState(() {
+        _receiverIP = cachedIp;
+        _receiverPort = cachedPort;
+      });
+
+      print('📦 Utilisation cache: $cachedIp:$cachedPort');
+      await _connectWebSocket();
+    } else {
+      print('⚠️ Aucun cache disponible, lancement découverte...');
+      await _runDiscoveryAndConnect();
+    }
+  }
+
   Future<void> _promptManualConnect() async {
     final ipCtl = TextEditingController(text: _receiverIP == "0.0.0.0" ? "" : _receiverIP);
     final portCtl = TextEditingController(text: _receiverPort.toString());
@@ -533,27 +557,29 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
             ),
           ),
         ),
+
+        // ✅ BADGE DE STATUT AGRANDI (en haut à droite)
         Positioned(
-          top: 28,
-          right: 14,
+          top: 40,
+          right: 20,
           child: GestureDetector(
             onTap: _promptManualConnect,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(18),
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(25),
                 border: Border.all(
                   color: _isConnected
-                      ? const Color(0xFF10B981).withOpacity(0.6)
-                      : const Color(0xFFE63946).withOpacity(0.6),
-                  width: 1.5,
+                      ? const Color(0xFF10B981).withOpacity(0.8)
+                      : const Color(0xFFE63946).withOpacity(0.8),
+                  width: 2.5,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.18),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 15,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
@@ -563,63 +589,64 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                   ScaleTransition(
                     scale: _connectionPulseAnimation,
                     child: Container(
-                      width: 8,
-                      height: 8,
+                      width: 12,
+                      height: 12,
                       decoration: BoxDecoration(
                         color: _isConnected ? const Color(0xFF10B981) : const Color(0xFFE63946),
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
                             color: (_isConnected ? const Color(0xFF10B981) : const Color(0xFFE63946))
-                                .withOpacity(0.55),
-                            blurRadius: 5,
-                            spreadRadius: 1,
+                                .withOpacity(0.6),
+                            blurRadius: 8,
+                            spreadRadius: 2,
                           ),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 12),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(height: 1),
                       Text(
-                        _isConnected ? "Connecté" : "Hors ligne",
+                        _isConnected ? "En ligne" : "Hors ligne",
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.2,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
                         ),
                       ),
                       if (_isConnected && _receiverIP != "0.0.0.0")
                         SizedBox(
-                          width: 90,
+                          width: 110,
                           child: Text(
                             _receiverIP,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: Colors.white.withOpacity(0.8),
-                              fontSize: 9,
+                              color: Colors.white.withOpacity(0.85),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ),
                     ],
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 10),
                   Icon(
                     Icons.settings,
-                    color: Colors.white.withOpacity(0.9),
-                    size: 14,
+                    color: Colors.white.withOpacity(0.95),
+                    size: 18,
                   ),
                 ],
               ),
             ),
           ),
         ),
+
         Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -698,6 +725,33 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                           ),
                         ),
                       ),
+
+                      // ✅ BOUTON RÉESSAYER (affiché si hors ligne)
+                      if (!_isConnected) ...[
+                        const SizedBox(height: 35),
+                        ElevatedButton.icon(
+                          onPressed: _retryWithCache,
+                          icon: const Icon(Icons.refresh_rounded, size: 24),
+                          label: const Text(
+                            "Réessayer la connexion",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFB800),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                            elevation: 10,
+                            shadowColor: const Color(0xFFFFB800).withOpacity(0.6),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
