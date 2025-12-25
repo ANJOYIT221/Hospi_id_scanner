@@ -1,8 +1,3 @@
-// =======================
-// id_scanner_screen.dart - SCANNER PROPRE
-// OCR → Envoie données → Attend réservation → Grave NFC (avec réessai auto)
-// =======================
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -10,7 +5,6 @@ import 'document_camera_screen.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/ocr_service.dart';
@@ -36,41 +30,29 @@ class IdScannerScreen extends StatefulWidget {
 class _IdScannerScreenState extends State<IdScannerScreen>
     with TickerProviderStateMixin {
 
-  // ====== Services ======
   final OCRService _ocrService = OCRService();
   final AudioPlayer _player = AudioPlayer();
-  final FlutterTts _tts = FlutterTts();
   final MethodChannel _nfcChannel = const MethodChannel('com.hospi_id_scan.nfc');
 
-  // ====== Réseau ======
   StreamSubscription<dynamic>? _streamSubscription;
   bool get _isConnected => widget.isConnected;
 
-  // ====== OCR / UI ======
   File? _selectedImage;
   Map<String, String>? _extracted;
   bool _isProcessing = false;
-  bool _isSpeaking = false;
-  bool _isWritingNfc = false;
 
-  // ✅ Réservation reçue de la borne (à graver)
   Map<String, String>? _bookingToWrite;
 
-  // ✅ NOUVEAU : Gestion des réessais NFC
   int _nfcWriteAttempts = 0;
   static const int _maxNfcAttempts = 5;
   Timer? _nfcRetryTimer;
 
-  // ====== Animations ======
   late final AnimationController _fadeController;
   late final AnimationController _slideController;
-  late final AnimationController _nfcController;
   late final AnimationController _pulseController;
 
-  // ====== Inactivité ======
   Timer? _inactivityTimer;
 
-  // ====== Palette ======
   static const Color primaryBlue = Color(0xFF0A84FF);
   static const Color darkBlue = Color(0xFF0066CC);
   static const Color softBlue = Color(0xFF64B5F6);
@@ -89,37 +71,30 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   void initState() {
     super.initState();
     _setupAnimations();
-    _initTts();
     _resetInactivityTimer();
 
-    // ✅ S'abonner au broadcast stream partagé
     if (widget.broadcastStream != null) {
       _streamSubscription = widget.broadcastStream!.listen(_handleBorneMessage);
     }
 
-    // Lancement automatique de la caméra
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future.delayed(const Duration(milliseconds: 100));
       if (mounted) _pickImage(ImageSource.camera);
-      _speak("Placez votre carte d'identité sur l'espace prévu.");
     });
   }
 
   @override
   void dispose() {
     _inactivityTimer?.cancel();
-    _nfcRetryTimer?.cancel(); // ✅ Annuler le timer de réessai
-    _tts.stop();
+    _nfcRetryTimer?.cancel();
     _player.dispose();
     _streamSubscription?.cancel();
     _fadeController.dispose();
     _slideController.dispose();
-    _nfcController.dispose();
     _pulseController.dispose();
     super.dispose();
   }
 
-  // ====== Inactivité ======
   void _resetInactivityTimer() {
     _inactivityTimer?.cancel();
     _inactivityTimer = Timer(const Duration(minutes: 5), () {
@@ -128,35 +103,11 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   }
   void _onUserActivity() => _resetInactivityTimer();
 
-  // ====== TTS ======
-  Future<void> _initTts() async {
-    await _tts.setLanguage("fr-FR");
-    await _tts.setSpeechRate(0.9);
-    await _tts.setVolume(0.9);
-    await _tts.setPitch(1.0);
-    _tts.setStartHandler(() => setState(() => _isSpeaking = true));
-    _tts.setCompletionHandler(() => setState(() => _isSpeaking = false));
-    _tts.setErrorHandler((_) => setState(() => _isSpeaking = false));
-  }
-
-  Future<void> _speak(String text) async {
-    if (_isSpeaking) await _tts.stop();
-    try {
-      await _tts.speak(text);
-    } catch (_) {
-      setState(() => _isSpeaking = false);
-    }
-  }
-
-  // ====== Animations ======
   void _setupAnimations() {
     _fadeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
     _slideController = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
-    _nfcController = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
     _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
   }
-
-  // ==================== RÉSEAU ====================
 
   void _sendToReceiver(Map<String, dynamic> data) {
     if (widget.webSocket == null || widget.webSocket!.readyState != WebSocket.open) {
@@ -166,10 +117,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
     print('📤 SCANNER → BORNE : ${data['action']}');
     widget.webSocket!.add(jsonEncode(data));
   }
-
-  // ============================================
-  // GESTION DES MESSAGES DE LA BORNE
-  // ============================================
 
   void _handleBorneMessage(dynamic message) {
     _onUserActivity();
@@ -182,7 +129,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       final action = data['action'];
       print('📨 Action: $action');
 
-      // ===== RÉSERVATION VALIDÉE (la borne a trouvé) =====
       if (action == 'booking_retrieved') {
         final rawBooking = data['booking'];
         if (rawBooking is! Map) {
@@ -200,7 +146,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
         print('✅ Réservation reçue: ${_bookingToWrite!['surname']} ${_bookingToWrite!['name']}');
         _showSnackBar("✅ Réservation confirmée !", successGreen);
 
-        // ✅ LANCER LA GRAVURE IMMÉDIATEMENT
         _writeToNfc();
         return;
       }
@@ -209,8 +154,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       print('❌ Erreur handleBorneMessage: $e');
     }
   }
-
-  // ==================== OCR ====================
 
   Future<void> _pickImage(ImageSource src) async {
     _onUserActivity();
@@ -244,7 +187,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
           if (!mounted) return;
           setState(() => _isProcessing = false);
           _showSnackBar("❌ Aucune donnée extraite. Réessayez.", errorRed);
-          await _speak("Je n'ai pas pu lire le document.");
           return;
         }
 
@@ -264,19 +206,15 @@ class _IdScannerScreenState extends State<IdScannerScreen>
 
         print('✅ OCR terminé: ${_extracted!['surname']} ${_extracted!['name']}');
 
-        // ✅ ENVOYER LES DONNÉES À LA BORNE (pour vérification PMS)
         _sendToReceiver(Map<String, dynamic>.from(normalized));
-        await _speak("Données envoyées, vérification en cours.");
 
       } catch (e) {
         if (!mounted) return;
         setState(() => _isProcessing = false);
         _showSnackBar("❌ Erreur : $e", errorRed);
-        await _speak("Erreur de traitement.");
       }
 
     } else {
-      // Galerie
       final picker = ImagePicker();
       final img = await picker.pickImage(
           source: src,
@@ -307,7 +245,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
           if (!mounted) return;
           setState(() => _isProcessing = false);
           _showSnackBar("❌ Aucune donnée extraite.", errorRed);
-          await _speak("Je n'ai pas pu lire le document.");
           return;
         }
 
@@ -326,7 +263,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
         });
 
         _sendToReceiver(Map<String, dynamic>.from(normalized));
-        await _speak("Données envoyées.");
 
       } catch (e) {
         if (!mounted) return;
@@ -335,8 +271,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       }
     }
   }
-
-  // ==================== NFC AVEC RÉESSAI AUTO ====================
 
   Future<void> _writeToNfc({bool isRetry = false}) async {
     _onUserActivity();
@@ -347,33 +281,19 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       return;
     }
 
-    // ✅ Incrémenter le compteur de tentatives
     if (!isRetry) {
       _nfcWriteAttempts = 0;
     }
     _nfcWriteAttempts++;
 
-    // ✅ Vérifier le nombre max de tentatives
     if (_nfcWriteAttempts > _maxNfcAttempts) {
       print('❌ Nombre maximum de tentatives atteint ($_maxNfcAttempts)');
-      setState(() => _isWritingNfc = false);
-      _nfcController.reverse();
       _showSnackBar("❌ Échec après $_maxNfcAttempts tentatives. Contactez le personnel.", errorRed);
-      await _speak("La gravure a échoué après plusieurs tentatives. Veuillez contacter le personnel.");
       return;
     }
 
     print('🔥 ========== GRAVURE NFC (Tentative $_nfcWriteAttempts/$_maxNfcAttempts) ==========');
     print('📝 Réservation: ${_bookingToWrite!['surname']} ${_bookingToWrite!['name']}');
-
-    setState(() => _isWritingNfc = true);
-    _nfcController.forward();
-
-    if (_nfcWriteAttempts == 1) {
-      await _speak("Approchez la carte fournie de la zone orange.");
-    } else {
-      await _speak("Tentative $_nfcWriteAttempts. Approchez de nouveau la carte.");
-    }
 
     final jsonText = jsonEncode(_bookingToWrite);
 
@@ -382,17 +302,13 @@ class _IdScannerScreenState extends State<IdScannerScreen>
 
       if (!mounted) return;
       setState(() {
-        _isWritingNfc = false;
-        _nfcWriteAttempts = 0; // ✅ Réinitialiser le compteur
+        _nfcWriteAttempts = 0;
       });
-      _nfcController.reverse();
-      _nfcRetryTimer?.cancel(); // ✅ Annuler le timer si succès
+      _nfcRetryTimer?.cancel();
 
       print('✅ Gravure NFC réussie !');
       _showSnackBar("✅ Carte de chambre obtenue !", successGreen);
-      await _speak("Parfait ! Votre carte de chambre est prête.");
 
-      // ✅ ENVOYER À LA BORNE QUE LA GRAVURE EST TERMINÉE
       _sendToReceiver({
         "action": "nfc_write_success",
         "booking": Map<String, dynamic>.from(_bookingToWrite!),
@@ -400,7 +316,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
 
       print('📤 Envoi confirmation gravure à la borne');
 
-      // ✅ RETOUR AU SPLASH APRÈS 3 SECONDES
       await Future.delayed(const Duration(seconds: 3));
       if (mounted) {
         widget.onReturnToSplash?.call();
@@ -408,12 +323,9 @@ class _IdScannerScreenState extends State<IdScannerScreen>
 
     } on PlatformException catch (e) {
       if (!mounted) return;
-      setState(() => _isWritingNfc = false);
-      _nfcController.reverse();
 
       print('❌ Erreur NFC (Tentative $_nfcWriteAttempts/$_maxNfcAttempts): ${e.message}');
 
-      // ✅ RÉESSAI AUTOMATIQUE
       _showSnackBar(
         "⏳ Réessai dans 2 secondes... ($_nfcWriteAttempts/$_maxNfcAttempts)",
         warningAmber,
@@ -429,12 +341,9 @@ class _IdScannerScreenState extends State<IdScannerScreen>
 
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isWritingNfc = false);
-      _nfcController.reverse();
 
       print('❌ Erreur inattendue (Tentative $_nfcWriteAttempts/$_maxNfcAttempts): $e');
 
-      // ✅ RÉESSAI AUTOMATIQUE
       _showSnackBar(
         "⏳ Erreur inattendue. Réessai... ($_nfcWriteAttempts/$_maxNfcAttempts)",
         warningAmber,
@@ -466,8 +375,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
     );
   }
 
-  // ==================== HELPERS UI ====================
-
   InputDecoration _modernInput(String label, String hint, IconData icon) {
     return InputDecoration(
       labelText: label, hintText: hint,
@@ -480,8 +387,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
     );
   }
-
-  // ==================== BUILD ====================
 
   @override
   Widget build(BuildContext context) {
@@ -511,11 +416,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
                     if (_extracted != null && !_isProcessing) ...[
                       const SizedBox(height: 12),
                       _buildExtractedCard(),
-                    ],
-                    // ✅ Indicateur de gravure NFC avec nombre de tentatives
-                    if (_isWritingNfc) ...[
-                      const SizedBox(height: 12),
-                      _buildNfcWritingCard(),
                     ],
                     const SizedBox(height: 90),
                   ],
@@ -772,58 +672,6 @@ class _IdScannerScreenState extends State<IdScannerScreen>
                   ),
                 ),
               ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ✅ NOUVEAU : Indicateur de gravure NFC avec tentatives
-  Widget _buildNfcWritingCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: cardWhite,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: warningAmber.withOpacity(0.3), width: 2),
-        boxShadow: [BoxShadow(color: warningAmber.withOpacity(0.12), blurRadius: 16, offset: const Offset(0, 8))],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: const [
-              Icon(Icons.nfc, color: warningAmber, size: 24),
-              SizedBox(width: 10),
-              Text("Gravure NFC en cours...", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: textDark)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const SizedBox(
-            width: 64,
-            height: 64,
-            child: CircularProgressIndicator(
-              strokeWidth: 5,
-              valueColor: AlwaysStoppedAnimation<Color>(warningAmber),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            "Tentative $_nfcWriteAttempts/$_maxNfcAttempts",
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: _nfcWriteAttempts > 3 ? errorRed : textMuted,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            "Approchez la carte de la zone NFC",
-            style: TextStyle(
-              fontSize: 12,
-              color: textMuted,
-              fontWeight: FontWeight.w600,
             ),
           ),
         ],

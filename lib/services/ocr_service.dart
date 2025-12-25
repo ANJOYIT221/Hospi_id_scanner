@@ -1,12 +1,10 @@
 import 'dart:io';
 import 'dart:convert';
-import 'package:flutter/services.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:mrz_parser/mrz_parser.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-
-const String kOpenAIHardcodedKey = "";
+import 'package:image/image.dart' as img;
 
 class OCRService {
   final bool useAiPostProcess;
@@ -62,8 +60,53 @@ class OCRService {
     return fixed;
   }
 
+  Future<File> _preprocessImage(File imageFile) async {
+    print('🔧 ========== PRÉTRAITEMENT IMAGE ==========');
+
+    final bytes = await imageFile.readAsBytes();
+    img.Image? image = img.decodeImage(bytes);
+
+    if (image == null) {
+      print('⚠️ Impossible de décoder l\'image');
+      return imageFile;
+    }
+
+    print('📐 Taille originale : ${image.width}x${image.height}');
+
+    if (image.width > 1920 || image.height > 1920) {
+      image = img.copyResize(
+        image,
+        width: image.width > image.height ? 1920 : null,
+        height: image.height > image.width ? 1920 : null,
+      );
+      print('✅ Redimensionnement : ${image.width}x${image.height}');
+    }
+
+    image = img.adjustColor(image, contrast: 1.2, brightness: 1.05);
+    print('✅ Contraste et luminosité ajustés');
+
+    image = img.convolution(image, filter: [
+      0, -1, 0,
+      -1, 5, -1,
+      0, -1, 0,
+    ]);
+    print('✅ Netteté appliquée');
+
+    final processedPath = '${imageFile.path}_processed.jpg';
+    final processedFile = File(processedPath);
+    await processedFile.writeAsBytes(img.encodeJpg(image, quality: 95));
+
+    print('✅ Prétraitement terminé : $processedPath');
+    print('==========================================');
+    return processedFile;
+  }
+
   Future<Map<String, String>> scanTextFromImage(File imageFile) async {
-    final inputImage = InputImage.fromFile(imageFile);
+    final startTime = DateTime.now();
+
+    final processedImage = await _preprocessImage(imageFile);
+
+    final inputImage = InputImage.fromFile(processedImage);
     final textRecognizer = GoogleMlKit.vision.textRecognizer();
 
     try {
@@ -87,29 +130,51 @@ class OCRService {
       if (mrzMap.isNotEmpty) {
         print('📤 MRZ trouvée → $mrzMap');
         final base = _withDefaultsAndClean(mrzMap);
-        return await _maybeAiRefine(correctedText, base);
+        final result = await _maybeAiRefine(correctedText, base);
+
+        final duration = DateTime.now().difference(startTime);
+        print('⏱️ Temps total: ${duration.inMilliseconds}ms');
+        return result;
       }
 
       final sejour = _extractFrenchResidencePermit(correctedText);
       if (sejour.isNotEmpty) {
         print('📤 Titre de séjour → $sejour');
         final base = _withDefaultsAndClean(sejour);
-        return await _maybeAiRefine(correctedText, base);
+        final result = await _maybeAiRefine(correctedText, base);
+
+        final duration = DateTime.now().difference(startTime);
+        print('⏱️ Temps total: ${duration.inMilliseconds}ms');
+        return result;
       }
 
       final newCni = _extractNewFrenchID(correctedText);
       if (newCni.isNotEmpty) {
         print('📤 Nouvelle CNI → $newCni');
         final base = _withDefaultsAndClean(newCni);
-        return await _maybeAiRefine(correctedText, base);
+        final result = await _maybeAiRefine(correctedText, base);
+
+        final duration = DateTime.now().difference(startTime);
+        print('⏱️ Temps total: ${duration.inMilliseconds}ms');
+        return result;
       }
 
       final classic = _extractDataFromText(correctedText);
       print('📤 Fallback labels → $classic');
       final base = _withDefaultsAndClean(classic);
-      return await _maybeAiRefine(correctedText, base);
+      final result = await _maybeAiRefine(correctedText, base);
+
+      final duration = DateTime.now().difference(startTime);
+      print('⏱️ Temps total: ${duration.inMilliseconds}ms');
+      return result;
     } finally {
       await textRecognizer.close();
+
+      try {
+        if (processedImage.path != imageFile.path) {
+          await processedImage.delete();
+        }
+      } catch (_) {}
     }
   }
 

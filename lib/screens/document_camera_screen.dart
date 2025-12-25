@@ -12,12 +12,11 @@ class DocumentCameraScreen extends StatefulWidget {
   State<DocumentCameraScreen> createState() => _DocumentCameraScreenState();
 }
 
-// Types de documents supportés
 enum DocumentType {
   none,
-  newId,      // Nouvelle CNI / Titre de séjour
-  oldId,      // Ancienne CNI française
-  passport,   // Passeport
+  newId,
+  oldId,
+  passport,
 }
 
 class _DocumentCameraScreenState extends State<DocumentCameraScreen>
@@ -33,34 +32,27 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   Timer? _detectionTimer;
   File? _capturedPhoto;
 
-  // Type de document détecté
   DocumentType _detectedType = DocumentType.none;
 
   late AnimationController _pulseController;
   late AnimationController _progressController;
 
-  // Timer validation automatique
   Timer? _autoValidateTimer;
   int _autoValidateCountdown = 5;
 
-  // ML Kit - ✅ OPTIMISATION : Réutilisation du recognizer
   TextRecognizer? _textRecognizer;
 
-  // Détections consécutives
   int _consecutiveDetections = 0;
   static const int _requiredDetections = 3;
 
-  // ✅ OPTIMISATION : Fréquence d'analyse réduite
   static const int _analysisPeriodMs = 800;
 
-  // Dimensions des cadres
   static const Map<DocumentType, Map<String, double>> _frameSizes = {
     DocumentType.newId: {'width': 300, 'height': 190},
     DocumentType.oldId: {'width': 340, 'height': 240},
     DocumentType.passport: {'width': 380, 'height': 270},
   };
 
-  // Couleurs des cadres (gardées)
   static const Map<DocumentType, Color> _frameColors = {
     DocumentType.newId: Colors.cyan,
     DocumentType.oldId: Colors.purpleAccent,
@@ -413,18 +405,14 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Caméra
           Positioned.fill(
             child: CameraPreview(_camera!),
           ),
 
-          // Overlay sombre
           _buildOverlay(),
 
-          // Multi-cadres (SANS LES LABELS)
           Center(child: _buildMultiFrames()),
 
-          // Compte à rebours de capture
           if (_isDetecting)
             Center(
               child: Container(
@@ -454,7 +442,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
               ),
             ),
 
-          // Message de statut SANS mention du type
           Positioned(
             bottom: 180,
             left: 20,
@@ -490,7 +477,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
             ),
           ),
 
-          // Indicateur de scan actif
           if (!_isDetecting && _detectedType == DocumentType.none)
             Positioned(
               bottom: 250,
@@ -528,7 +514,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
               ),
             ),
 
-          // Bouton retour
           Positioned(
             top: 40,
             left: 20,
@@ -550,7 +535,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
             ),
           ),
 
-          // Bouton annuler compte à rebours
           if (_isDetecting)
             Positioned(
               top: 40,
@@ -587,7 +571,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     );
   }
 
-  // ✅ Multi-cadres SANS labels
   Widget _buildMultiFrames() {
     return AnimatedBuilder(
       animation: _pulseController,
@@ -613,7 +596,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     );
   }
 
-  // ✅ Cadre simple SANS label
   Widget _buildSingleFrame({
     required DocumentType type,
     required bool isActive,
@@ -621,10 +603,10 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     final size = _frameSizes[type]!;
     final color = _frameColors[type]!;
 
-    final double opacity = isActive ? 1.0 : (0.3 + _pulseController.value * 0.2);
-    final double borderWidth = isActive ? 4.0 : 2.0;
-    final double shadowSpread = isActive ? 4.0 : 1.0;
-    final double shadowBlur = isActive ? 25.0 : 10.0;
+    final double opacity = isActive ? 1.0 : (0.15 + _pulseController.value * 0.1);
+    final double borderWidth = isActive ? 3.0 : 1.5;
+    final double shadowSpread = isActive ? 3.0 : 0.5;
+    final double shadowBlur = isActive ? 20.0 : 8.0;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
@@ -635,10 +617,10 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
           color: color.withOpacity(opacity),
           width: borderWidth,
         ),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(isActive ? 0.5 : 0.2),
+            color: color.withOpacity(isActive ? 0.4 : 0.15),
             blurRadius: shadowBlur,
             spreadRadius: shadowSpread,
           ),
@@ -691,7 +673,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
             ),
           ),
 
-          // Message avec compte à rebours (SANS mention du type)
           Positioned(
             top: 60,
             left: 20,
@@ -761,14 +742,12 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
             ),
           ),
 
-          // Boutons
           Positioned(
             bottom: 50,
             left: 20,
             right: 20,
             child: Column(
               children: [
-                // Bouton Recommencer
                 GestureDetector(
                   onTap: _retakePhoto,
                   child: Container(
@@ -806,7 +785,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
 
                 const SizedBox(height: 16),
 
-                // Bouton Valider
                 GestureDetector(
                   onTap: _validatePhoto,
                   child: Container(
@@ -863,7 +841,6 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
             ),
           ),
 
-          // Indicateur circulaire
           Positioned(
             top: 60,
             right: 20,
