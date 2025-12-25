@@ -129,6 +129,29 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       final action = data['action'];
       print('📨 Action: $action');
 
+      // ===== 🆕 RELANCER LE SCAN =====
+      if (action == 'retry_scan') {
+        print('🔄 Demande de réessai du scan reçue');
+
+        // Réinitialiser l'état
+        setState(() {
+          _selectedImage = null;
+          _extracted = null;
+          _isProcessing = false;
+          _bookingToWrite = null;
+        });
+
+        // Relancer l'appareil photo après un court délai
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) {
+            print('📸 Relancement de l\'appareil photo');
+            _pickImage(ImageSource.camera);
+          }
+        });
+
+        return;
+      }
+
       if (action == 'booking_retrieved') {
         final rawBooking = data['booking'];
         if (rawBooking is! Map) {

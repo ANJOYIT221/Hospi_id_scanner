@@ -47,6 +47,9 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
 
   static const int _analysisPeriodMs = 800;
 
+  Timer? _inactivityTimer;
+  static const Duration _inactivityDuration = Duration(minutes: 5);
+
   static const Map<DocumentType, Map<String, double>> _frameSizes = {
     DocumentType.newId: {'width': 300, 'height': 190},
     DocumentType.oldId: {'width': 340, 'height': 240},
@@ -76,6 +79,21 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     _textRecognizer = GoogleMlKit.vision.textRecognizer();
 
     _initCamera();
+    _resetInactivityTimer();
+  }
+
+  void _resetInactivityTimer() {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = Timer(_inactivityDuration, () {
+      if (mounted) {
+        print('⏰ Inactivité détectée - Retour au splash');
+        Navigator.pop(context);
+      }
+    });
+  }
+
+  void _onUserActivity() {
+    _resetInactivityTimer();
   }
 
   Future<void> _initCamera() async {
@@ -315,6 +333,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   }
 
   Future<void> _captureFinalPhoto() async {
+    _onUserActivity();
     try {
       final XFile photo = await _camera!.takePicture();
 
@@ -353,6 +372,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   }
 
   void _validatePhoto() {
+    _onUserActivity();
     _cancelAutoValidateTimer();
     if (_capturedPhoto != null) {
       Navigator.pop(context, _capturedPhoto);
@@ -360,6 +380,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   }
 
   void _retakePhoto() {
+    _onUserActivity();
     _cancelAutoValidateTimer();
 
     setState(() {
@@ -401,172 +422,155 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   }
 
   Widget _buildCameraScreen() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: CameraPreview(_camera!),
-          ),
+    return GestureDetector(
+      onTap: _onUserActivity,
+      onPanDown: (_) => _onUserActivity(),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: CameraPreview(_camera!),
+            ),
 
-          _buildOverlay(),
+            _buildOverlay(),
 
-          Center(child: _buildMultiFrames()),
+            Center(child: _buildMultiFrames()),
 
-          if (_isDetecting)
-            Center(
+            // 🆕 PAS DE COMPTE À REBOURS PENDANT LA DÉTECTION
+
+            Positioned(
+              bottom: 180,
+              left: 20,
+              right: 20,
               child: Container(
-                width: 100,
-                height: 100,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 decoration: BoxDecoration(
-                  color: (_frameColors[_detectedType] ?? Colors.green).withOpacity(0.3),
-                  shape: BoxShape.circle,
+                  color: _isDetecting
+                      ? (_frameColors[_detectedType] ?? Colors.green).withOpacity(0.3)
+                      : Colors.black.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: _frameColors[_detectedType] ?? Colors.green,
-                    width: 3,
+                    color: _isDetecting
+                        ? (_frameColors[_detectedType] ?? Colors.green)
+                        : Colors.white30,
+                    width: 2,
                   ),
                 ),
+                child: Text(
+                  _isDetecting
+                      ? '📸 Document détecté ! Capture en cours...'
+                      : '📄 Placez votre pièce dans le cadre',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    shadows: [
+                      Shadow(color: Colors.black, blurRadius: 10),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            if (!_isDetecting && _detectedType == DocumentType.none)
+              Positioned(
+                bottom: 250,
+                left: 0,
+                right: 0,
                 child: Center(
-                  child: Text(
-                    '$_countdown',
-                    style: const TextStyle(
-                      fontSize: 60,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      shadows: [
-                        Shadow(color: Colors.black, blurRadius: 10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.cyan),
+                          ),
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Recherche de document...',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
               ),
-            ),
 
-          Positioned(
-            bottom: 180,
-            left: 20,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              decoration: BoxDecoration(
-                color: _isDetecting
-                    ? (_frameColors[_detectedType] ?? Colors.green).withOpacity(0.3)
-                    : Colors.black.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: _isDetecting
-                      ? (_frameColors[_detectedType] ?? Colors.green)
-                      : Colors.white30,
-                  width: 2,
-                ),
-              ),
-              child: Text(
-                _isDetecting
-                    ? '📸 Document détecté ! Photo dans $_countdown...'
-                    : '📄 Placez votre pièce dans le cadre',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                  shadows: [
-                    Shadow(color: Colors.black, blurRadius: 10),
-                  ],
-                ),
-              ),
-            ),
-          ),
-
-          if (!_isDetecting && _detectedType == DocumentType.none)
-            Positioned(
-              bottom: 250,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.cyan),
-                        ),
-                      ),
-                      SizedBox(width: 10),
-                      Text(
-                        'Recherche de document...',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-          Positioned(
-            top: 40,
-            left: 20,
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
-                ),
-                child: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-              ),
-            ),
-          ),
-
-          if (_isDetecting)
             Positioned(
               top: 40,
-              right: 20,
+              left: 20,
               child: GestureDetector(
-                onTap: _cancelCountdown,
+                onTap: () {
+                  _onUserActivity();
+                  Navigator.pop(context);
+                },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: Colors.white, width: 2),
+                    color: Colors.black.withOpacity(0.5),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.close, color: Colors.white, size: 20),
-                      SizedBox(width: 6),
-                      Text(
-                        'Annuler',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
+                  child: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: Colors.white,
+                    size: 20,
                   ),
                 ),
               ),
             ),
-        ],
+
+            if (_isDetecting)
+              Positioned(
+                top: 40,
+                right: 20,
+                child: GestureDetector(
+                  onTap: () {
+                    _onUserActivity();
+                    _cancelCountdown();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.close, color: Colors.white, size: 20),
+                        SizedBox(width: 6),
+                        Text(
+                          'Annuler',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -662,77 +666,261 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
   }
 
   Widget _buildPreviewScreen() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Center(
-            child: Image.file(
-              _capturedPhoto!,
-              fit: BoxFit.contain,
-            ),
-          ),
-
-          Positioned(
-            top: 60,
-            left: 20,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.8),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: _frameColors[_detectedType] ?? Colors.cyan,
-                  width: 2,
-                ),
+    return GestureDetector(
+      onTap: _onUserActivity,
+      onPanDown: (_) => _onUserActivity(),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            Center(
+              child: Image.file(
+                _capturedPhoto!,
+                fit: BoxFit.contain,
               ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
-                      Icon(
-                        Icons.document_scanner,
-                        color: Colors.cyan,
-                        size: 24,
-                      ),
-                      SizedBox(width: 10),
-                      Text(
-                        'Document capturé !',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+            ),
+
+            // 🆕 PREVIEW AVEC BARRE VERTE (SANS CHIFFRE)
+            Positioned(
+              top: 60,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.green.withOpacity(0.8),
+                    width: 3,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.green.withOpacity(0.3),
+                      blurRadius: 20,
+                      spreadRadius: 3,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(
+                          Icons.check_circle_rounded,
+                          color: Colors.green,
+                          size: 28,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Document capturé !',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 🆕 CADENAS + "Vérification sécurisée"
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.green.withOpacity(0.4),
+                          width: 2,
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Validation automatique dans $_autoValidateCountdown sec...',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.orange.shade300,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.lock_outline_rounded,
+                              color: Colors.green,
+                              size: 22,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Vérification sécurisée',
+                            style: TextStyle(
+                              color: Colors.green,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 🆕 BARRE DE PROGRESSION VERTE (SANS TEXTE DE COMPTE À REBOURS)
+                    AnimatedBuilder(
+                      animation: _progressController,
+                      builder: (context, child) {
+                        return Container(
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade900,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: Colors.green.withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: LinearProgressIndicator(
+                              value: _progressController.value,
+                              backgroundColor: Colors.transparent,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.green.shade400,
+                              ),
+                              minHeight: 12,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            Positioned(
+              bottom: 50,
+              left: 20,
+              right: 20,
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: _retakePhoto,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.red.withOpacity(0.4),
+                            blurRadius: 10,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.refresh, color: Colors.white, size: 24),
+                          SizedBox(width: 10),
+                          Text(
+                            '🔄 Recommencer la photo',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 12),
+
+                  const SizedBox(height: 16),
+
+                  GestureDetector(
+                    onTap: _validatePhoto,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            Colors.green.withOpacity(0.8),
+                            Colors.green,
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.green.withOpacity(0.4),
+                            blurRadius: 10,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.white, size: 24),
+                          SizedBox(width: 10),
+                          Text(
+                            '✅ Valider maintenant',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // 🆕 TEXTE ÉLÉGANT "VALIDATION AUTOMATIQUE"
                   AnimatedBuilder(
                     animation: _progressController,
                     builder: (context, child) {
-                      return ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: LinearProgressIndicator(
-                          value: _progressController.value,
-                          backgroundColor: Colors.grey.shade800,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            _autoValidateCountdown <= 2
-                                ? Colors.orange
-                                : (_frameColors[_detectedType] ?? Colors.cyan),
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.green.withOpacity(0.4),
+                            width: 2,
                           ),
-                          minHeight: 8,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.timer_outlined,
+                              color: Colors.green.shade300,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Flexible(
+                              child: Text(
+                                'Validation automatique si aucune action',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.95),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       );
                     },
@@ -740,136 +928,8 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
                 ],
               ),
             ),
-          ),
-
-          Positioned(
-            bottom: 50,
-            left: 20,
-            right: 20,
-            child: Column(
-              children: [
-                GestureDetector(
-                  onTap: _retakePhoto,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withOpacity(0.9),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.red.withOpacity(0.4),
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.refresh, color: Colors.white, size: 24),
-                        SizedBox(width: 10),
-                        Text(
-                          '🔄 Recommencer la photo',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                GestureDetector(
-                  onTap: _validatePhoto,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          (_frameColors[_detectedType] ?? Colors.green).withOpacity(0.8),
-                          (_frameColors[_detectedType] ?? Colors.green),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (_frameColors[_detectedType] ?? Colors.green).withOpacity(0.4),
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.check_circle, color: Colors.white, size: 24),
-                        SizedBox(width: 10),
-                        Text(
-                          '✅ Valider maintenant',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                Text(
-                  'La photo sera validée automatiquement si vous ne faites rien',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          Positioned(
-            top: 60,
-            right: 20,
-            child: Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.7),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: _autoValidateCountdown <= 2
-                      ? Colors.orange
-                      : (_frameColors[_detectedType] ?? Colors.cyan),
-                  width: 3,
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  '$_autoValidateCountdown',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: _autoValidateCountdown <= 2 ? Colors.orange : Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -879,6 +939,7 @@ class _DocumentCameraScreenState extends State<DocumentCameraScreen>
     _countdownTimer?.cancel();
     _detectionTimer?.cancel();
     _autoValidateTimer?.cancel();
+    _inactivityTimer?.cancel();
     _camera?.dispose();
     _pulseController.dispose();
     _progressController.dispose();
