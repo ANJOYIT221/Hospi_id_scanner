@@ -1,5 +1,5 @@
 // lib/services/ocr_service.dart
-// ✅ OPTIMISÉ : Fuzzy matching réduit, corrections d'accents gardées, OpenAI activé
+// ✅ AMÉLIORATION : Extraction des noms/prénoms sans labels explicites
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -27,7 +27,8 @@ class OCRService {
     'SÉVERINE', 'HÉLÈNE', 'DELPHINE', 'STÉPHANIE', 'BÉATRICE', 'BRIGITTE',
     'AGNÈS', 'MÉLANIE', 'ÉLISE', 'AMÉLIE', 'LÉA', 'ZOÉ', 'CHLOÉ',
     'JOSÉ', 'RENÉ', 'RAPHAËL', 'MICHAËL', 'JOËL', 'GAËL',
-    'LOUNA', 'EMMA', 'JADE', 'LOUISE', 'ALICE', 'INÈS',
+    'LOUNA', 'EMMA', 'JADE', 'LOUISE', 'ALICE', 'INÈS', 'AMADOU', 'MAMADOU',
+    'JULES', 'NGIAYE',
   };
 
   static bool _prenomsLoaded = false;
@@ -240,85 +241,13 @@ class OCRService {
       return _titleCase(fixed);
     }
 
-    // ✅ OPTIMISATION : Fuzzy matching réduit
-    if (wasModified || fixed.length >= 4) {
-      final fuzzyMatch = _findClosestFrenchNameOptimized(fixed);
-      if (fuzzyMatch != null) {
-        return fuzzyMatch;
-      }
-    }
-
     if (wasModified) {
-      print('   ⚠️ Aucun prénom trouvé, garde la correction: "${_titleCase(fixed)}"');
+      print('   ⚠️ Aucun prénom exact trouvé, garde la correction: "${_titleCase(fixed)}"');
       return _titleCase(fixed);
     }
 
     print('   ⏭️ Aucune correction: "$word"');
     return word;
-  }
-
-  int _levenshteinDistance(String s1, String s2) {
-    if (s1 == s2) return 0;
-    if (s1.isEmpty) return s2.length;
-    if (s2.isEmpty) return s1.length;
-
-    List<int> v0 = List<int>.generate(s2.length + 1, (i) => i);
-    List<int> v1 = List<int>.filled(s2.length + 1, 0);
-
-    for (int i = 0; i < s1.length; i++) {
-      v1[0] = i + 1;
-      for (int j = 0; j < s2.length; j++) {
-        int cost = (s1[i] == s2[j]) ? 0 : 1;
-        v1[j + 1] = [v1[j] + 1, v0[j + 1] + 1, v0[j] + cost].reduce((a, b) => a < b ? a : b);
-      }
-      List<int> temp = v0;
-      v0 = v1;
-      v1 = temp;
-    }
-
-    return v0[s2.length];
-  }
-
-  // ✅ NOUVELLE MÉTHODE OPTIMISÉE : Fuzzy matching réduit
-  String? _findClosestFrenchNameOptimized(String input) {
-    if (input.length < 4) return null;
-
-    final inputUpper = input.toUpperCase();
-
-    // ✅ OPTIMISATION 1 : On cherche uniquement les noms qui ont une distance de 1
-    const int MAX_DISTANCE = 1;
-
-    // ✅ OPTIMISATION 2 : Similarité minimale augmentée à 80%
-    const double MIN_SIMILARITY = 0.8;
-
-    for (final name in _commonFrenchNames) {
-      // ✅ OPTIMISATION 3 : Skip les noms trop différents en longueur
-      final lengthDiff = (inputUpper.length - name.length).abs();
-      if (lengthDiff > MAX_DISTANCE) continue;
-
-      final distance = _levenshteinDistance(inputUpper, name);
-
-      // ✅ OPTIMISATION 4 : Arrêt dès qu'on trouve un match valide
-      if (distance == MAX_DISTANCE) {
-        final similarity = _calculateSimilarity(inputUpper, name);
-        if (similarity >= MIN_SIMILARITY) {
-          print('   🔍 Fuzzy match trouvé: "$input" → "$name" (distance: $distance, similarité: ${(similarity * 100).toStringAsFixed(0)}%)');
-          return _titleCase(name);
-        }
-      }
-    }
-
-    return null;
-  }
-
-  double _calculateSimilarity(String s1, String s2) {
-    final longer = s1.length > s2.length ? s1 : s2;
-    final shorter = s1.length > s2.length ? s2 : s1;
-
-    if (longer.isEmpty) return 1.0;
-
-    final distance = _levenshteinDistance(s1, s2);
-    return (longer.length - distance) / longer.length;
   }
 
   Future<Map<String, String>> _maybeAiRefine(
@@ -534,7 +463,10 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
     }
   }
 
+  // ✅ AMÉLIORATION : Extraction améliorée pour titres de séjour
   Map<String, String> _extractFrenchResidencePermit(String raw) {
+    print('🔍 ========== EXTRACTION TITRE DE SÉJOUR ==========');
+
     final rawLines = raw.split('\n');
     final lines = <String>[];
     final uppers = <String>[];
@@ -550,10 +482,14 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
     for (final u in uppers) {
       if (u.contains('TITRE DE S') || u.contains('TITRE DE SEJOUR') || u.contains('RESIDENCE PERMIT')) {
         looksLikeSejour = true;
+        print('✅ Document identifié comme titre de séjour');
         break;
       }
     }
-    if (!looksLikeSejour) return {};
+    if (!looksLikeSejour) {
+      print('⏭️ Pas un titre de séjour');
+      return {};
+    }
 
     String surname = '';
     String given = '';
@@ -562,49 +498,152 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
     String birth = '';
     String validUntil = '';
 
-    int headerIdx = -1;
-    for (int i = 0; i < uppers.length; i++) {
-      final u = uppers[i];
-      final hasNom = u.contains('NOM') || u.contains('NOMS') || u.contains('SURNAME');
-      final hasPrenom = u.contains('PRENOM') || u.contains('PRÉNOM') || u.contains('FORENAME') || u.contains('GIVEN') || u.contains('FORSNAME') || u.contains('FORSNAMES');
-      if (hasNom && hasPrenom) { headerIdx = i; break; }
+    // ✅ NOUVELLE MÉTHODE : Extraction après "TITRE DE SÉJOUR" sans labels
+    print('🔎 Recherche nom/prénoms après "TITRE DE SÉJOUR"...');
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final upper = uppers[i];
+
+      if (upper.contains('TITRE DE SEJOUR') || upper.contains('TITRE DE S')) {
+        print('📍 Ligne "TITRE DE SÉJOUR" trouvée: "$line"');
+
+        // Extraire les mots après "TITRE DE SÉJOUR"
+        final words = line.split(RegExp(r'\s+'));
+        print('   Mots de la ligne: $words');
+
+        bool foundTitre = false;
+        final candidateWords = <String>[];
+
+        for (final word in words) {
+          final wordUpper = word.toUpperCase();
+
+          // Passer "TITRE", "DE", "SÉJOUR", "SEJOUR"
+          if (wordUpper.contains('TITRE') || wordUpper == 'DE' || wordUpper.contains('SEJOUR')) {
+            foundTitre = true;
+            continue;
+          }
+
+          // Ignorer les codes courts (FRA, M, etc.)
+          if (word.length <= 3 && !RegExp(r'^[A-Z]+$').hasMatch(word)) {
+            continue;
+          }
+
+          // Après avoir trouvé "TITRE DE SÉJOUR", collecter les mots
+          if (foundTitre) {
+            // Nettoyer les caractères spéciaux
+            final cleaned = word.replaceAll(RegExp(r'[*•.,;:]+'), '');
+            if (cleaned.isNotEmpty && cleaned.length > 1) {
+              candidateWords.add(cleaned);
+            }
+          }
+        }
+
+        print('   Mots candidats: $candidateWords');
+
+        // Le premier mot en MAJUSCULES = NOM
+        // Les suivants en Title Case ou mixte = PRÉNOMS
+        if (candidateWords.isNotEmpty) {
+          final firstWord = candidateWords[0];
+          final firstUpper = firstWord.toUpperCase();
+
+          // Si le premier mot est tout en majuscules = NOM
+          if (firstWord == firstUpper && firstWord.length > 2) {
+            surname = _cleanName(firstWord);
+            print('   ✅ NOM trouvé: "$surname"');
+
+            // Le reste = prénoms
+            if (candidateWords.length > 1) {
+              final prenomsWords = <String>[];
+              for (int j = 1; j < candidateWords.length; j++) {
+                final word = candidateWords[j];
+                // S'arrêter aux codes/labels
+                if (word.length <= 2 || _isLabelLine(word.toUpperCase())) {
+                  break;
+                }
+                prenomsWords.add(word);
+              }
+
+              if (prenomsWords.isNotEmpty) {
+                given = prenomsWords.join(' ');
+                print('   ✅ PRÉNOMS trouvés: "$given"');
+              }
+            }
+          }
+        }
+
+        break;
+      }
     }
 
-    if (headerIdx >= 0) {
-      int i = headerIdx + 1;
-      while (i < uppers.length && _isLabelLine(uppers[i])) i++;
+    // ✅ MÉTHODE CLASSIQUE : Recherche avec labels
+    if (surname.isEmpty || given.isEmpty) {
+      print('🔎 Recherche avec labels explicites...');
 
-      if (i < lines.length) {
-        final maybeSurname = _cleanName(lines[i]);
-        if (_looksLikeName(maybeSurname)) { surname = maybeSurname; i++; }
-      }
-      while (i < uppers.length && _isLabelLine(uppers[i])) i++;
-      if (i < lines.length) {
-        final maybeGiven = _cleanName(lines[i]);
-        if (_looksLikeName(maybeGiven)) { given = maybeGiven; }
-      }
-    }
-
-    if (surname.isEmpty) {
-      for (int i = 0; i < uppers.length - 1; i++) {
+      int headerIdx = -1;
+      for (int i = 0; i < uppers.length; i++) {
         final u = uppers[i];
-        if (u.contains('SURNAME') || u.contains('NOM')) {
-          final cand = _cleanName(lines[i + 1]);
-          if (_looksLikeName(cand)) { surname = cand; break; }
+        final hasNom = u.contains('NOM') || u.contains('NOMS') || u.contains('SURNAME');
+        final hasPrenom = u.contains('PRENOM') || u.contains('PRÉNOM') || u.contains('FORENAME') || u.contains('GIVEN') || u.contains('FORSNAME') || u.contains('FORSNAMES');
+        if (hasNom && hasPrenom) {
+          headerIdx = i;
+          print('   📍 Header trouvé ligne $i: "$lines[i]"');
+          break;
+        }
+      }
+
+      if (headerIdx >= 0) {
+        int i = headerIdx + 1;
+        while (i < uppers.length && _isLabelLine(uppers[i])) i++;
+
+        if (i < lines.length && surname.isEmpty) {
+          final maybeSurname = _cleanName(lines[i]);
+          if (_looksLikeName(maybeSurname)) {
+            surname = maybeSurname;
+            print('   ✅ NOM (après header): "$surname"');
+            i++;
+          }
+        }
+        while (i < uppers.length && _isLabelLine(uppers[i])) i++;
+        if (i < lines.length && given.isEmpty) {
+          final maybeGiven = _cleanName(lines[i]);
+          if (_looksLikeName(maybeGiven)) {
+            given = maybeGiven;
+            print('   ✅ PRÉNOMS (après header): "$given"');
+          }
+        }
+      }
+
+      if (surname.isEmpty) {
+        for (int i = 0; i < uppers.length - 1; i++) {
+          final u = uppers[i];
+          if (u.contains('SURNAME') || u.contains('NOM')) {
+            final cand = _cleanName(lines[i + 1]);
+            if (_looksLikeName(cand)) {
+              surname = cand;
+              print('   ✅ NOM (après label): "$surname"');
+              break;
+            }
+          }
+        }
+      }
+
+      if (given.isEmpty) {
+        for (int i = 0; i < uppers.length - 1; i++) {
+          final u = uppers[i];
+          if (u.contains('FORENAME') || u.contains('GIVEN') || u.contains('PRENOM') || u.contains('PRÉNOM')) {
+            final cand = _cleanName(lines[i + 1]);
+            if (_looksLikeName(cand)) {
+              given = cand;
+              print('   ✅ PRÉNOMS (après label): "$given"');
+              break;
+            }
+          }
         }
       }
     }
 
-    if (given.isEmpty) {
-      for (int i = 0; i < uppers.length - 1; i++) {
-        final u = uppers[i];
-        if (u.contains('FORENAME') || u.contains('GIVEN') || u.contains('PRENOM') || u.contains('PRÉNOM')) {
-          final cand = _cleanName(lines[i + 1]);
-          if (_looksLikeName(cand)) { given = cand; break; }
-        }
-      }
-    }
-
+    // Extraction nationalité
     for (int i = 0; i < uppers.length; i++) {
       final u = uppers[i];
       if (u.contains(' NAT')) {
@@ -613,50 +652,85 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
           final m = RegExp(r'\b([A-Z]{3})\b').firstMatch(natLine);
           if (m != null && m.group(1) != null) {
             final code = m.group(1)!;
-            if (code != 'NOM') nat = code;
+            if (code != 'NOM') {
+              nat = code;
+              print('   ✅ NATIONALITÉ: "$nat"');
+            }
           }
           if (i + 2 < lines.length) {
             final d = _parseDate(lines[i + 2]);
-            if (d != null) birth = d;
+            if (d != null) {
+              birth = d;
+              print('   ✅ DATE NAISSANCE: "$birth"');
+            }
           }
         }
         break;
       }
     }
 
+    // Extraction numéro personnel
     for (int i = 0; i < uppers.length; i++) {
       final u = uppers[i];
       if (u.contains('PERSON') && u.contains('NUM')) {
         final same = RegExp(r'\b(\d{9,14})\b').firstMatch(u);
-        if (same != null && same.group(1) != null) { id = same.group(1)!; break; }
+        if (same != null && same.group(1) != null) {
+          id = same.group(1)!;
+          print('   ✅ ID NUMBER (même ligne): "$id"');
+          break;
+        }
         if (i + 1 < uppers.length) {
           final next = uppers[i + 1];
           final m = RegExp(r'\b(\d{9,14})\b').firstMatch(next);
-          if (m != null && m.group(1) != null) { id = m.group(1)!; break; }
+          if (m != null && m.group(1) != null) {
+            id = m.group(1)!;
+            print('   ✅ ID NUMBER (ligne suivante): "$id"');
+            break;
+          }
         }
       }
     }
+
     if (id.isEmpty) {
       final flat = _uc(raw).replaceAll(' ', '');
       final all = RegExp(r'\b\d{9,14}\b').allMatches(flat);
       int bestLen = 0;
       for (final m in all) {
         final s = m.group(0);
-        if (s != null && s.length > bestLen) { bestLen = s.length; id = s; }
+        if (s != null && s.length > bestLen) {
+          bestLen = s.length;
+          id = s;
+        }
+      }
+      if (id.isNotEmpty) {
+        print('   ✅ ID NUMBER (pattern général): "$id"');
       }
     }
 
+    // Extraction date validité
     for (int i = 0; i < uppers.length; i++) {
       final u = uppers[i];
       if (u.contains('RESIDENCE PERMIT') || u.contains('VALABLE')) {
         if (i + 1 < lines.length) {
           final d = _parseDate(lines[i + 1]);
-          if (d != null) { validUntil = d; break; }
+          if (d != null) {
+            validUntil = d;
+            print('   ✅ VALIDITÉ: "$validUntil"');
+            break;
+          }
         }
       }
     }
 
     final hasAny = surname.isNotEmpty || given.isNotEmpty || id.isNotEmpty;
+
+    print('📊 Résultat extraction:');
+    print('   - Nom: ${surname.isNotEmpty ? surname : "NON TROUVÉ"}');
+    print('   - Prénoms: ${given.isNotEmpty ? given : "NON TROUVÉ"}');
+    print('   - ID: ${id.isNotEmpty ? id : "NON TROUVÉ"}');
+    print('   - Nat: ${nat.isNotEmpty ? nat : "NON TROUVÉ"}');
+    print('=============================================');
+
     if (!hasAny) return {};
 
     return {

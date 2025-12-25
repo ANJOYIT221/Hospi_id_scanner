@@ -1,12 +1,13 @@
 // =======================
-// splash_wrapper.dart (Scanner) - VERSION DE BASE + UI AMÉLIORÉE
+// splash_wrapper.dart (SCANNER) - SERVEUR WEBSOCKET PERMANENT
+// Le scanner reste connecté et attend les requêtes de la borne
+// Déclenchement automatique de l'appareil photo à la connexion
 // =======================
 
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'id_scanner_screen.dart';
 
 class SplashWrapper extends StatefulWidget {
@@ -31,29 +32,22 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   late Animation<double> _pulseAnimation;
   late Animation<double> _connectionPulseAnimation;
 
-  WebSocket? _socket;
+  HttpServer? _server;
+  WebSocket? _borneSocket;
   Stream<dynamic>? _broadcastStream;
-  bool _isConnected = false;
-  String _receiverIP = "0.0.0.0";
-  int _receiverPort = 3000;
+  bool _isServerRunning = false;
+  bool _borneConnected = false;
+
+  String _localIP = "Recherche...";
+  static const int _serverPort = 3000;
 
   bool _autoNavigated = false;
-
-  static const String _cachedIpKey = 'cached_receiver_ip';
-  static const String _cachedPortKey = 'cached_receiver_port';
-  static const String _cachedMacKey = 'cached_receiver_mac';
-
-  static const int _discoveryPort = 3001;
-  static const String _wantedMac = "DC:62:94:38:3C:C0";
-  static final InternetAddress _mcastAddr = InternetAddress('239.255.255.250');
-  RawDatagramSocket? _mcastListenSocket;
 
   @override
   void initState() {
     super.initState();
     _initAnimations();
-    _startMulticastListener();
-    _runDiscoveryAndConnect();
+    _startWebSocketServer();
   }
 
   void _initAnimations() {
@@ -84,420 +78,152 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     Future.delayed(const Duration(milliseconds: 600), () => _slideController.forward());
   }
 
+  // ============================================
+  // 🆕 SERVEUR WEBSOCKET PERMANENT
+  // ============================================
+
+  Future<void> _startWebSocketServer() async {
+    try {
+      // Récupérer l'IP locale
+      _localIP = await _getLocalIPv4() ?? "Inconnue";
+
+      // Démarrer le serveur WebSocket
+      _server = await HttpServer.bind(InternetAddress.anyIPv4, _serverPort);
+
+      setState(() => _isServerRunning = true);
+
+      print('✅ ========================================');
+      print('✅ SCANNER - Serveur WebSocket démarré');
+      print('✅ Adresse: ws://$_localIP:$_serverPort');
+      print('✅ ========================================');
+
+      // Écouter les connexions entrantes
+      _server!.transform(WebSocketTransformer()).listen((WebSocket socket) {
+        print('🔗 BORNE connectée !');
+
+        setState(() {
+          _borneSocket = socket;
+          _borneConnected = true;
+        });
+
+        // 🆕 DÉCLENCHEMENT AUTOMATIQUE DE L'APPAREIL PHOTO
+        if (!_autoNavigated && mounted && showLanding) {
+          _autoNavigated = true;
+          print('📸 Déclenchement automatique de l\'écran de scan');
+          _handleTap();
+        }
+
+        // Créer un broadcast stream
+        _broadcastStream = socket.asBroadcastStream();
+
+        // Écouter les messages de la borne
+        _broadcastStream!.listen(
+          _handleBorneMessage,
+          onDone: () {
+            print('🔌 BORNE déconnectée');
+            setState(() {
+              _borneConnected = false;
+              _borneSocket = null;
+              _broadcastStream = null;
+              _autoNavigated = false; // Réinitialiser pour la prochaine connexion
+            });
+          },
+          onError: (error) {
+            print('❌ Erreur WebSocket: $error');
+            setState(() {
+              _borneConnected = false;
+              _borneSocket = null;
+              _broadcastStream = null;
+              _autoNavigated = false;
+            });
+          },
+        );
+      });
+
+    } catch (e) {
+      print('❌ Erreur démarrage serveur: $e');
+      setState(() => _isServerRunning = false);
+    }
+  }
+
   Future<String?> _getLocalIPv4() async {
-    final ifaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-    );
-    for (final iface in ifaces) {
-      for (final a in iface.addresses) {
-        if (a.type == InternetAddressType.IPv4 && !a.address.startsWith('127.')) {
-          return a.address;
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+      );
+
+      for (final interface in interfaces) {
+        for (final addr in interface.addresses) {
+          if (addr.type == InternetAddressType.IPv4 && !addr.address.startsWith('127.')) {
+            return addr.address;
+          }
         }
       }
+    } catch (e) {
+      print('❌ Erreur récupération IP: $e');
     }
     return null;
   }
 
-  InternetAddress _guessBroadcast(String localIp) {
-    final parts = localIp.split('.');
-    if (parts.length == 4) {
-      return InternetAddress('${parts[0]}.${parts[1]}.${parts[2]}.255');
-    }
-    return InternetAddress('255.255.255.255');
-  }
+  // ============================================
+  // 📨 GESTION DES MESSAGES DE LA BORNE
+  // ============================================
 
-  Future<void> _startMulticastListener() async {
+  void _handleBorneMessage(dynamic message) {
     try {
-      _mcastListenSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, _discoveryPort);
-      _mcastListenSocket!.joinMulticast(_mcastAddr);
-      print("👂 Écoute heartbeat multicast sur ${_mcastAddr.address}:$_discoveryPort");
+      print('📨 SCANNER ← BORNE : Message reçu');
 
-      _mcastListenSocket!.listen((evt) {
-        if (evt == RawSocketEvent.read) {
-          final d = _mcastListenSocket!.receive();
-          if (d == null) return;
-          try {
-            final payload = utf8.decode(d.data);
-            final parsed = jsonDecode(payload);
-            if (parsed is Map && parsed['action'] == 'LOUNA_HEARTBEAT') {
-              final mac = parsed['mac']?.toString();
-              final ip = parsed['ip']?.toString() ?? d.address.address;
-              final int port = parsed['port'] is int
-                  ? parsed['port']
-                  : int.tryParse(parsed['port']?.toString() ?? '3000') ?? 3000;
-
-              print("💓 Heartbeat: mac=$mac ip=$ip port=$port");
-
-              if (mac != null && (_wantedMac.isEmpty || mac == _wantedMac)) {
-                final changed = (_receiverIP != ip || _receiverPort != port);
-                if (changed) {
-                  setState(() {
-                    _receiverIP = ip;
-                    _receiverPort = port;
-                  });
-                  if (!_isConnected) {
-                    _connectWebSocket();
-                  }
-                }
-              }
-            }
-          } catch (_) {}
-        }
-      });
-    } catch (e) {
-      print("❌ Multicast listener KO: $e");
-    }
-  }
-
-  Future<void> _saveConnection({String? mac}) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_cachedIpKey, _receiverIP);
-      await prefs.setInt(_cachedPortKey, _receiverPort);
-
-      if (mac != null) {
-        await prefs.setString(_cachedMacKey, mac);
+      final data = jsonDecode(message);
+      if (data is! Map) {
+        print('⚠️ Format invalide');
+        return;
       }
 
-      print('💾 Connexion sauvegardée en cache: $_receiverIP:$_receiverPort (MAC: ${mac ?? "non spécifié"})');
-    } catch (e) {
-      print('❌ Erreur sauvegarde connexion: $e');
-    }
-  }
+      final action = data['action'];
+      print('📨 Action: $action');
 
-  Future<Map<String, Map<String, dynamic>>> discoverReceivers({
-    int timeoutSeconds = 3,
-    int repeats = 3,
-  }) async {
-    final results = <String, Map<String, dynamic>>{};
-    RawDatagramSocket? socket;
+      // ===== DEMANDE DE CHECK-IN =====
+      if (action == 'start_checkin') {
+        print('🚀 Demande de check-in reçue');
 
-    try {
-      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      socket.broadcastEnabled = true;
-
-      final localIp = await _getLocalIPv4();
-      final bcastNet = localIp != null ? _guessBroadcast(localIp) : InternetAddress('255.255.255.255');
-      final bcastAll = InternetAddress('255.255.255.255');
-
-      final reqBytes = utf8.encode(jsonEncode({
-        'action': 'DISCOVER_LOUNA',
-        'time': DateTime.now().toIso8601String(),
-      }));
-
-      final prefs = await SharedPreferences.getInstance();
-      final cachedIp = prefs.getString(_cachedIpKey);
-      final cachedPort = prefs.getInt(_cachedPortKey);
-
-      if (cachedIp != null && cachedPort != null) {
-        print('📦 Cache trouvé: $cachedIp:$cachedPort');
-        print('🎯 Envoi requête UDP directe à l\'IP en cache...');
-
-        try {
-          final cachedAddr = InternetAddress(cachedIp);
-          socket.send(reqBytes, cachedAddr, _discoveryPort);
-          await Future.delayed(const Duration(milliseconds: 100));
-          socket.send(reqBytes, cachedAddr, _discoveryPort);
-
-          print('✅ Requête UDP envoyée au cache, attente réponse...');
-        } catch (e) {
-          print('⚠️ Erreur envoi UDP au cache: $e');
-        }
-      } else {
-        print('ℹ️ Aucun cache trouvé');
-      }
-
-      for (int i = 0; i < repeats; i++) {
-        socket.send(reqBytes, bcastNet, _discoveryPort);
-        socket.send(reqBytes, bcastAll, _discoveryPort);
-        await Future.delayed(const Duration(milliseconds: 120));
-      }
-
-      final completer = Completer<void>();
-      final timer = Timer(Duration(seconds: timeoutSeconds), () {
-        if (!completer.isCompleted) completer.complete();
-      });
-
-      socket.listen((evt) {
-        if (evt == RawSocketEvent.read) {
-          final d = socket!.receive();
-          if (d == null) return;
-          try {
-            final payload = utf8.decode(d.data);
-            final parsed = jsonDecode(payload);
-            final mac = parsed['mac']?.toString();
-            final ip = parsed['ip']?.toString() ?? d.address.address;
-            final int port = parsed['port'] is int
-                ? parsed['port']
-                : int.tryParse(parsed['port']?.toString() ?? '3000') ?? 3000;
-
-            if (mac != null && mac.isNotEmpty) {
-              results[mac] = {'ip': ip, 'port': port, 'raw': parsed};
-
-              if (ip == cachedIp && port == cachedPort) {
-                print("✅ L'IP en cache a répondu ! ($ip:$port)");
-              } else {
-                print("🔍 Découverte: mac=$mac ip=$ip port=$port");
-              }
-            }
-          } catch (_) {}
-        }
-      });
-
-      await completer.future;
-      timer.cancel();
-    } catch (e) {
-      print("❌ discoverReceivers error: $e");
-    } finally {
-      socket?.close();
-    }
-
-    return results;
-  }
-
-  Future<void> _runDiscoveryAndConnect() async {
-    print("🔎 Lancement découverte UDP (avec cache si disponible)…");
-    final discovered = await discoverReceivers(timeoutSeconds: 3, repeats: 3);
-
-    if (discovered.isEmpty) {
-      print("😕 Aucun récepteur trouvé.");
-      return;
-    }
-
-    String selectedIp = discovered.values.first['ip'];
-    int selectedPort = discovered.values.first['port'];
-    String? selectedMac = discovered.keys.first;
-
-    if (_wantedMac.isNotEmpty && discovered.containsKey(_wantedMac)) {
-      selectedIp = discovered[_wantedMac]!['ip'];
-      selectedPort = discovered[_wantedMac]!['port'];
-      selectedMac = _wantedMac;
-      print("✅ Récepteur ciblé: $_wantedMac → $selectedIp:$selectedPort");
-    }
-
-    setState(() {
-      _receiverIP = selectedIp;
-      _receiverPort = selectedPort;
-    });
-
-    await _connectWebSocket();
-
-    if (_isConnected) {
-      await _saveConnection(mac: selectedMac);
-    }
-  }
-
-  Future<void> _connectWebSocket() async {
-    if (_receiverIP == "0.0.0.0" || _receiverIP.trim().isEmpty) {
-      print("⏭️ IP inconnue, on ne tente pas la connexion.");
-      return;
-    }
-
-    for (;;) {
-      try {
-        final uri = 'ws://$_receiverIP:$_receiverPort';
-        print("🔗 [SPLASH] Connexion WebSocket sur $uri …");
-        _socket = await WebSocket.connect(uri);
-
-        setState(() => _isConnected = true);
-        print("✅ [SPLASH] WebSocket connecté");
-
-        _broadcastStream = _socket!.asBroadcastStream();
-
-        if (!_autoNavigated && mounted) {
+        // Naviguer automatiquement vers l'écran de scan
+        if (!_autoNavigated && mounted && showLanding) {
           _autoNavigated = true;
-          Future.delayed(const Duration(milliseconds: 800), () {
-            if (mounted && showLanding) {
-              print("🚀 Navigation automatique vers IdScannerScreen");
-              _handleTap();
-            }
-          });
+          _handleTap();
         }
-
-        _broadcastStream!.listen(
-              (msg) {
-            final data = jsonDecode(msg);
-            if (data is Map && data["action"] == "start_checkin") {
-              _handleTap();
-            }
-          },
-          onDone: () {
-            setState(() {
-              _isConnected = false;
-              _broadcastStream = null;
-            });
-            print("🔌 [SPLASH] WebSocket déconnecté");
-            _reconnect();
-          },
-          onError: (_) {
-            setState(() {
-              _isConnected = false;
-              _broadcastStream = null;
-            });
-            _reconnect();
-          },
-        );
-        break;
-      } catch (e) {
-        print("❌ [SPLASH] WebSocket impossible ($e). Pause 2s…");
-        await Future.delayed(const Duration(seconds: 2));
-        if (_receiverIP == "0.0.0.0") return;
+        return;
       }
-    }
-  }
 
-  void _reconnect() {
-    if (mounted) _connectWebSocket();
+      // ===== AUTRES ACTIONS (à compléter selon tes besoins) =====
+      print('⚠️ Action non gérée: $action');
+
+    } catch (e) {
+      print('❌ Erreur handleBorneMessage: $e');
+    }
   }
 
   // ============================================
-  // 🆕 BOUTON RÉESSAYER AVEC CACHE
+  // 🔄 ENVOI DE MESSAGES À LA BORNE
   // ============================================
 
-  Future<void> _retryWithCache() async {
-    print('🔄 Réessai connexion avec cache...');
+  void _sendToBorne(Map<String, dynamic> data) {
+    if (_borneSocket == null || _borneSocket!.readyState != WebSocket.open) {
+      print('❌ Borne non connectée');
+      return;
+    }
 
-    final prefs = await SharedPreferences.getInstance();
-    final cachedIp = prefs.getString(_cachedIpKey);
-    final cachedPort = prefs.getInt(_cachedPortKey);
-
-    if (cachedIp != null && cachedPort != null) {
-      setState(() {
-        _receiverIP = cachedIp;
-        _receiverPort = cachedPort;
-      });
-
-      print('📦 Utilisation cache: $cachedIp:$cachedPort');
-      await _connectWebSocket();
-    } else {
-      print('⚠️ Aucun cache disponible, lancement découverte...');
-      await _runDiscoveryAndConnect();
+    try {
+      _borneSocket!.add(jsonEncode(data));
+      print('📤 SCANNER → BORNE : ${data['action']}');
+    } catch (e) {
+      print('❌ Erreur envoi message: $e');
     }
   }
 
-  Future<void> _promptManualConnect() async {
-    final ipCtl = TextEditingController(text: _receiverIP == "0.0.0.0" ? "" : _receiverIP);
-    final portCtl = TextEditingController(text: _receiverPort.toString());
-    String? error;
-
-    bool isValidIp(String s) {
-      final parts = s.trim().split('.');
-      if (parts.length != 4) return false;
-      for (final p in parts) {
-        final n = int.tryParse(p);
-        if (n == null || n < 0 || n > 255) return false;
-      }
-      return true;
-    }
-
-    await showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setSt) {
-          return AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            backgroundColor: Colors.white,
-            title: Row(children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E3A8A).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.settings_input_antenna, color: Color(0xFF1E3A8A), size: 24),
-              ),
-              const SizedBox(width: 12),
-              const Text("Connexion à la borne", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))
-            ]),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: ipCtl,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: "Adresse IP",
-                    hintText: "ex: 192.168.1.10",
-                    prefixIcon: const Icon(Icons.router, color: Color(0xFF1E3A8A)),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: const OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(12)),
-                      borderSide: BorderSide(color: Color(0xFF1E3A8A), width: 2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: portCtl,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: "Port",
-                    hintText: "ex: 3000",
-                    prefixIcon: const Icon(Icons.input, color: Color(0xFF1E3A8A)),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    focusedBorder: const OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(12)),
-                      borderSide: BorderSide(color: Color(0xFF1E3A8A), width: 2),
-                    ),
-                  ),
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE63946).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: const Color(0xFFE63946).withOpacity(0.3)),
-                    ),
-                    child: Row(children: [
-                      const Icon(Icons.error_outline, color: Color(0xFFE63946), size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(child: Text(error!, style: const TextStyle(color: Color(0xFFE63946), fontWeight: FontWeight.w500)))
-                    ]),
-                  )
-                ]
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text("Annuler", style: TextStyle(color: Colors.grey.shade600)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1E3A8A),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-                onPressed: () {
-                  final ip = ipCtl.text.trim();
-                  final p = int.tryParse(portCtl.text.trim()) ?? 0;
-                  if (!isValidIp(ip)) {
-                    setSt(() => error = "Adresse IP invalide");
-                    return;
-                  }
-                  if (p <= 0 || p > 65535) {
-                    setSt(() => error = "Port invalide (1-65535)");
-                    return;
-                  }
-                  setState(() {
-                    _receiverIP = ip;
-                    _receiverPort = p;
-                  });
-                  Navigator.pop(ctx);
-                  _connectWebSocket();
-                },
-                child: const Text("Connecter", style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ],
-          );
-        });
-      },
-    );
-  }
+  // ============================================
+  // UI
+  // ============================================
 
   void _handleTap() {
     setState(() {
@@ -519,22 +245,22 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     _slideController.dispose();
     _pulseController.dispose();
     _connectionPulseController.dispose();
-    _socket?.close();
-    _mcastListenSocket?.close();
+    _server?.close();
+    _borneSocket?.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: showLanding ? _handleTap : null,
+      onLongPress: showLanding ? _handleTap : null,
       child: Scaffold(
         body: showLanding
             ? _buildSplashScreen()
             : IdScannerScreen(
           broadcastStream: _broadcastStream,
-          webSocket: _socket,
-          isConnected: _isConnected,
+          webSocket: _borneSocket,
+          isConnected: _borneConnected,
           onReturnToSplash: _returnToSplash,
         ),
       ),
@@ -544,6 +270,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   Widget _buildSplashScreen() {
     return Stack(
       children: [
+        // Fond dégradé
         Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -558,95 +285,128 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           ),
         ),
 
-        // ✅ BADGE DE STATUT AGRANDI (en haut à droite)
+        // Badge de statut serveur (en haut à droite)
         Positioned(
           top: 40,
           right: 20,
-          child: GestureDetector(
-            onTap: _promptManualConnect,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(25),
-                border: Border.all(
-                  color: _isConnected
-                      ? const Color(0xFF10B981).withOpacity(0.8)
-                      : const Color(0xFFE63946).withOpacity(0.8),
-                  width: 2.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.25),
-                    blurRadius: 15,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(25),
+              border: Border.all(
+                color: _isServerRunning
+                    ? const Color(0xFF10B981).withOpacity(0.8)
+                    : const Color(0xFFE63946).withOpacity(0.8),
+                width: 2.5,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ScaleTransition(
-                    scale: _connectionPulseAnimation,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: _isConnected ? const Color(0xFF10B981) : const Color(0xFFE63946),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: (_isConnected ? const Color(0xFF10B981) : const Color(0xFFE63946))
-                                .withOpacity(0.6),
-                            blurRadius: 8,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 15,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ScaleTransition(
+                  scale: _connectionPulseAnimation,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: _isServerRunning ? const Color(0xFF10B981) : const Color(0xFFE63946),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: (_isServerRunning ? const Color(0xFF10B981) : const Color(0xFFE63946))
+                              .withOpacity(0.6),
+                          blurRadius: 8,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _isServerRunning ? "Serveur actif" : "Serveur inactif",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    if (_isServerRunning)
                       Text(
-                        _isConnected ? "En ligne" : "Hors ligne",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
+                        _localIP,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.85),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                      if (_isConnected && _receiverIP != "0.0.0.0")
-                        SizedBox(
-                          width: 110,
-                          child: Text(
-                            _receiverIP,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.85),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(width: 10),
-                  Icon(
-                    Icons.settings,
-                    color: Colors.white.withOpacity(0.95),
-                    size: 18,
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
 
+        // Badge connexion borne (en haut à gauche) - RÉDUIT
+        Positioned(
+          top: 40,
+          left: 20,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _borneConnected
+                    ? const Color(0xFF10B981).withOpacity(0.8)
+                    : const Color(0xFFFFB800).withOpacity(0.8),
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 15,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _borneConnected ? Icons.link : Icons.link_off,
+                  color: _borneConnected ? const Color(0xFF10B981) : const Color(0xFFFFB800),
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _borneConnected ? "Connectée" : "En attente",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Contenu principal
         Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -667,7 +427,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                     ],
                   ),
                   child: const Icon(
-                    Icons.badge_outlined,
+                    Icons.document_scanner_outlined,
                     size: 100,
                     color: Colors.white,
                   ),
@@ -699,7 +459,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        "Identity",
+                        "Scanner",
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.w300,
@@ -715,43 +475,30 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
                           border: Border.all(color: Colors.white.withOpacity(0.3), width: 1.5),
                           borderRadius: BorderRadius.circular(30),
                         ),
-                        child: Text(
-                          _isConnected ? "Connexion établie ✓" : "Connexion en cours...",
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Colors.white.withOpacity(0.95),
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: 1,
-                          ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.lock_outline,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              _isServerRunning
+                                  ? "Système de vérification d'identité sécurisé"
+                                  : "Démarrage du serveur...",
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.white.withOpacity(0.95),
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.5,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
                         ),
                       ),
-
-                      // ✅ BOUTON RÉESSAYER (affiché si hors ligne)
-                      if (!_isConnected) ...[
-                        const SizedBox(height: 35),
-                        ElevatedButton.icon(
-                          onPressed: _retryWithCache,
-                          icon: const Icon(Icons.refresh_rounded, size: 24),
-                          label: const Text(
-                            "Réessayer la connexion",
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 17,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFFFB800),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            elevation: 10,
-                            shadowColor: const Color(0xFFFFB800).withOpacity(0.6),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
