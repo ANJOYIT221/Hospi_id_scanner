@@ -1,5 +1,3 @@
-// lib/services/ocr_service.dart
-// ✅ AMÉLIORATION : Extraction des noms/prénoms sans labels explicites
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -14,24 +12,6 @@ class OCRService {
   final bool useAiPostProcess;
   final String model;
   final String kOpenAIHardcodedKey = dotenv.env['OPENAI_API_KEY'] ?? '';
-
-  static Set<String> _commonFrenchNames = {
-    'MARIE', 'JEAN', 'PIERRE', 'MICHEL', 'ANDRÉ', 'PHILIPPE', 'ALAIN',
-    'JACQUES', 'BERNARD', 'CHRISTIAN', 'DANIEL', 'PAUL', 'NICOLAS',
-    'FRANÇOIS', 'FRÉDÉRIC', 'STÉPHANE', 'LAURENT', 'PATRICK', 'CHRISTOPHE',
-    'JULIEN', 'DAVID', 'THOMAS', 'ALEXANDRE', 'OLIVIER', 'SYLVAIN',
-    'SÉBASTIEN', 'ÉRIC', 'JÉRÔME', 'GÉRARD', 'CÉDRIC', 'PASCAL',
-    'NATHALIE', 'ISABELLE', 'SYLVIE', 'CATHERINE', 'CHRISTINE', 'SOPHIE',
-    'MARTINE', 'MONIQUE', 'FRANÇOISE', 'VALÉRIE', 'SANDRINE', 'VÉRONIQUE',
-    'CÉLINE', 'AURÉLIE', 'ÉMILIE', 'CAROLINE', 'JULIE', 'STEPHANIE',
-    'SÉVERINE', 'HÉLÈNE', 'DELPHINE', 'STÉPHANIE', 'BÉATRICE', 'BRIGITTE',
-    'AGNÈS', 'MÉLANIE', 'ÉLISE', 'AMÉLIE', 'LÉA', 'ZOÉ', 'CHLOÉ',
-    'JOSÉ', 'RENÉ', 'RAPHAËL', 'MICHAËL', 'JOËL', 'GAËL',
-    'LOUNA', 'EMMA', 'JADE', 'LOUISE', 'ALICE', 'INÈS', 'AMADOU', 'MAMADOU',
-    'JULES', 'NGIAYE',
-  };
-
-  static bool _prenomsLoaded = false;
 
   static const Map<String, String> _encodingFixMap = {
     'ã©': 'é',
@@ -59,83 +39,15 @@ class OCRService {
   };
 
   static const Map<String, String> _accentFixMap = {
-    'ae': 'é',
-    'ee': 'é',
-    'e0': 'é',
-    'é0': 'é',
-    'e9': 'é',
-    'ea': 'é',
-    'eg': 'é',
-    'e`': 'è',
-    'è0': 'è',
-    'e8': 'è',
-    'e^': 'ê',
-    'ê0': 'ê',
-    'e6': 'ê',
-    'a`': 'à',
-    'à0': 'à',
-    'ao': 'à',
-    'a8': 'à',
-    'a0': 'à',
-    'c,': 'ç',
-    'ç0': 'ç',
-    'c0': 'ç',
-    'co': 'ç',
-    'c.': 'ç',
-    'o^': 'ô',
-    'ô0': 'ô',
-    'o0': 'ô',
-    'oo': 'ô',
-    'o6': 'ô',
-    'i^': 'î',
-    'î0': 'î',
-    'i0': 'î',
-    'i6': 'î',
-    'i:': 'ï',
-    'ï0': 'ï',
-    'i.': 'ï',
-    'u`': 'ù',
-    'ù0': 'ù',
-    'u0': 'ù',
-    'u8': 'ù',
-    'u^': 'û',
-    'û0': 'û',
-    'u6': 'û',
-    'u:': 'ü',
-    'ü0': 'ü',
     'oe': 'œ',
     '0e': 'œ',
-    'ée': 'ée',
-    'éé': 'ée',
+    'ae': 'æ',
   };
 
   OCRService({
     this.useAiPostProcess = true,
     this.model = "gpt-4o-mini",
-  }) {
-    if (!_prenomsLoaded) {
-      _loadPrenomsFromFile();
-    }
-  }
-
-  static Future<void> _loadPrenomsFromFile() async {
-    try {
-      final String fileContent = await rootBundle.loadString('assets/prenoms.txt');
-      final List<String> lines = fileContent.split('\n');
-
-      for (final line in lines) {
-        final trimmed = line.trim().toUpperCase();
-        if (trimmed.isNotEmpty) {
-          _commonFrenchNames.add(trimmed);
-        }
-      }
-
-      _prenomsLoaded = true;
-      print('✅ ${_commonFrenchNames.length} prénoms chargés depuis prenoms.txt');
-    } catch (e) {
-      print('⚠️ Impossible de charger prenoms.txt: $e');
-    }
-  }
+  });
 
   String _fixEncoding(String text) {
     String fixed = text;
@@ -166,8 +78,8 @@ class OCRService {
       print(encodingFixed);
       print('=====================================');
 
-      final correctedText = _correctCommonOcrErrors(encodingFixed);
-      print('🔧 ========== OCR CORRIGÉ ==========');
+      final correctedText = _correctBasicErrors(encodingFixed);
+      print('🔧 ========== CORRECTIONS BASIQUES ==========');
       print(correctedText);
       print('=====================================');
 
@@ -201,53 +113,18 @@ class OCRService {
     }
   }
 
-  String _correctCommonOcrErrors(String text) {
-    final words = text.split(RegExp(r'\s+'));
-    final correctedWords = <String>[];
-
-    for (var word in words) {
-      print('🔍 Analyse mot: "$word"');
-      String correctedWord = _fixAccents(word);
-      correctedWords.add(correctedWord);
-    }
-
-    return correctedWords.join(' ');
-  }
-
-  String _fixAccents(String word) {
-    if (word.isEmpty || word.length < 3) {
-      print('   ⏭️ Mot trop court, ignoré');
-      return word;
-    }
-
-    String fixed = word.toLowerCase();
-    String original = fixed;
-    bool wasModified = false;
+  String _correctBasicErrors(String text) {
+    String fixed = text;
 
     for (final entry in _accentFixMap.entries) {
-      if (fixed.contains(entry.key)) {
-        fixed = fixed.replaceAll(entry.key, entry.value);
-        wasModified = true;
+      if (fixed.toLowerCase().contains(entry.key)) {
+        final regex = RegExp(entry.key, caseSensitive: false);
+        fixed = fixed.replaceAll(regex, entry.value);
+        print('🔧 Correction accent: "${entry.key}" → "${entry.value}"');
       }
     }
 
-    if (wasModified) {
-      print('   🔧 Après correction accents: "$original" → "$fixed"');
-    }
-
-    final fixedUpper = fixed.toUpperCase();
-    if (_commonFrenchNames.contains(fixedUpper)) {
-      print('   ✅ Match exact trouvé: "$word" → "${_titleCase(fixed)}"');
-      return _titleCase(fixed);
-    }
-
-    if (wasModified) {
-      print('   ⚠️ Aucun prénom exact trouvé, garde la correction: "${_titleCase(fixed)}"');
-      return _titleCase(fixed);
-    }
-
-    print('   ⏭️ Aucune correction: "$word"');
-    return word;
+    return fixed;
   }
 
   Future<Map<String, String>> _maybeAiRefine(
@@ -255,18 +132,18 @@ class OCRService {
       Map<String, String> base,
       ) async {
     if (!useAiPostProcess || kOpenAIHardcodedKey.trim().isEmpty) {
-      return _postProcessWithDictionary(base);
+      return _postProcessBasic(base);
     }
     try {
       final refined = await _aiRefine(ocr, base);
-      if (refined.isNotEmpty) return _postProcessWithDictionary(refined);
+      if (refined.isNotEmpty) return _postProcessBasic(refined);
     } catch (e) {
       print('⚠️ AI refine error: $e');
     }
-    return _postProcessWithDictionary(base);
+    return _postProcessBasic(base);
   }
 
-  Map<String, String> _postProcessWithDictionary(Map<String, String> data) {
+  Map<String, String> _postProcessBasic(Map<String, String> data) {
     final result = Map<String, String>.from(data);
 
     print('🔍 ========== POST-TRAITEMENT ==========');
@@ -274,34 +151,19 @@ class OCRService {
     final prenoms = result['prenoms'] ?? '';
     if (prenoms.isNotEmpty && prenoms != 'INCONNU') {
       print('📝 Prénoms avant: "$prenoms"');
-
       final encodingFixed = _fixEncoding(prenoms);
-      print('🔧 Après correction encodage: "$encodingFixed"');
-
-      final words = encodingFixed.split(RegExp(r'\s+'));
-      final correctedWords = <String>[];
-
-      for (final word in words) {
-        final fixed = _fixAccents(word);
-        correctedWords.add(fixed);
-      }
-
-      result['prenoms'] = correctedWords.join(' ');
-      result['givenNames'] = correctedWords.join(' ');
-      print('✅ Prénoms après: "${result['prenoms']}"');
+      print('✅ Prénoms après: "$encodingFixed"');
+      result['prenoms'] = encodingFixed;
+      result['givenNames'] = encodingFixed;
     }
 
     final nom = result['nom'] ?? '';
     if (nom.isNotEmpty && nom != 'INCONNU') {
       print('📝 Nom avant: "$nom"');
-
       final encodingFixed = _fixEncoding(nom);
-      print('🔧 Après correction encodage: "$encodingFixed"');
-
-      final fixed = _fixAccents(encodingFixed);
-      result['nom'] = fixed;
-      result['nomUsage'] = fixed;
-      print('✅ Nom après: "${result['nom']}"');
+      print('✅ Nom après: "$encodingFixed"');
+      result['nom'] = encodingFixed;
+      result['nomUsage'] = encodingFixed;
     }
 
     print('=========================================');
@@ -315,56 +177,54 @@ class OCRService {
     final uri = Uri.parse('https://api.openai.com/v1/chat/completions');
 
     final system = '''
-Tu es un expert en correction d'erreurs OCR sur des documents d'identité français.
+Tu es un expert en extraction de données depuis des documents d'identité français (CNI, titres de séjour, passeports).
 
-⚠️ ERREURS OCR FRÉQUENTES À CORRIGER ABSOLUMENT :
+⚠️ RÈGLES ABSOLUES :
 
-ACCENTS É :
-- "ae" → "é" (Saevine → Séverine)
-- "ee" → "é" (Andree → André)
-- "e0" → "é" (Jose0 → José)
+1. EXTRAIS les informations EXACTEMENT comme elles apparaissent dans le texte OCR
+2. NE MODIFIE PAS les noms/prénoms s'ils sont déjà lisibles
+3. CORRIGE uniquement les erreurs OCR évidentes :
+   - Accents manquants : "Francois" → "François"
+   - Encodage cassé : "ã©" → "é"
+   - Lettres similaires : "0" → "O", "l" → "I" dans les noms
+   - Ligatures : "oe" → "œ"
 
-ACCENTS È :
-- "e\`" → "è" (Helene\` → Hélène)
+4. NE SUBSTITUE JAMAIS un prénom par un autre
+5. SI TU NE TROUVES PAS une information, mets "INCONNU"
+6. PRÉSERVE LES MAJUSCULES/minuscules selon le document
 
-CÉDILLE Ç :
-- "c," → "ç" (Franc,ois → François)
+EXEMPLES D'ERREURS OCR À CORRIGER :
+- "Francois" → "François" (accent manquant)
+- "C0RINNE" → "CORINNE" (0 → O)
+- "Jose0" → "José" (0 → accent)
+- "Helene\`" → "Hélène" (accent mal lu)
+- "SEJOUR" comme nom → cherche le VRAI nom ailleurs dans le texte
 
-ENCODAGE UTF-8 :
-- "ã©" → "é" (Sã©verine → Séverine)
-- "Ã©" → "é"
-
-INSTRUCTIONS STRICTES :
-1. Détecte et corrige UNIQUEMENT les erreurs OCR évidentes (accents manquants/mal reconnus)
-2. NE CHANGE PAS un prénom s'il est déjà lisible et cohérent
-3. PRÉSERVE TOUS LES ACCENTS français
-4. Ne substitue JAMAIS un prénom par un autre complètement différent
-5. Si un prénom est illisible, laisse-le tel quel plutôt que de deviner
-
-PRÉNOMS FRANÇAIS COURANTS (pour référence) :
-Marie, Jean, Pierre, Michel, André, Philippe, Jacques, Bernard, Paul, Nicolas, François,
-Nathalie, Isabelle, Sophie, Christine, Caroline, Julie, Stéphanie, Séverine, Hélène,
-Louna, Emma, Jade, Louise, Alice, Chloé, Inès
+STRUCTURE DU DOCUMENT :
+- CNI : NOM en haut, PRÉNOMS en dessous, numéro à 12 chiffres
+- Titre de séjour : souvent format "NOM Prénom" après "TITRE DE SÉJOUR"
+- Passeport : MRZ en bas (commence par P<FRA ou IDFRA)
 
 Retourne EXCLUSIVEMENT un JSON avec :
-- nom (string, MAJUSCULES, accents corrigés)
-- prenoms (string, Title Case avec accents corrigés)
-- idNumber (string)
-- nationalite (string, code ISO-3)
+- nom (string, MAJUSCULES)
+- prenoms (string, Title Case)
+- idNumber (string, chiffres uniquement)
+- nationalite (string, code ISO-3 : FRA, SEN, etc.)
 - birthDate (string, JJ/MM/AAAA ou vide)
 - validUntil (string, JJ/MM/AAAA ou vide)
 ''';
 
     final user = '''
-OCR brut :
+OCR brut du document :
 """
 $ocrText
 """
 
-Base JSON (NE CHANGE QUE LES ERREURS D'ACCENTS ÉVIDENTES) :
+Données extraites par le système (PEUT CONTENIR DES ERREURS) :
 ${jsonEncode(current)}
 
-IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les accents mal lus !
+MISSION : Extrais les VRAIES données en corrigeant uniquement les erreurs OCR évidentes.
+Ne change PAS un prénom correct en un autre prénom !
 ''';
 
     final body = {
@@ -404,6 +264,8 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       print('⚠️ OpenAI returned non-JSON – fallback to base');
       return current;
     }
+
+    print('✅ OpenAI extraction : ${jsonEncode(parsed)}');
 
     return {
       'nom': _cleanName((parsed['nom'] ?? current['nom'] ?? '').toString()),
@@ -463,7 +325,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
     }
   }
 
-  // ✅ AMÉLIORATION : Extraction améliorée pour titres de séjour
   Map<String, String> _extractFrenchResidencePermit(String raw) {
     print('🔍 ========== EXTRACTION TITRE DE SÉJOUR ==========');
 
@@ -498,7 +359,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
     String birth = '';
     String validUntil = '';
 
-    // ✅ NOUVELLE MÉTHODE : Extraction après "TITRE DE SÉJOUR" sans labels
     print('🔎 Recherche nom/prénoms après "TITRE DE SÉJOUR"...');
 
     for (int i = 0; i < lines.length; i++) {
@@ -508,7 +368,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       if (upper.contains('TITRE DE SEJOUR') || upper.contains('TITRE DE S')) {
         print('📍 Ligne "TITRE DE SÉJOUR" trouvée: "$line"');
 
-        // Extraire les mots après "TITRE DE SÉJOUR"
         final words = line.split(RegExp(r'\s+'));
         print('   Mots de la ligne: $words');
 
@@ -518,20 +377,16 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
         for (final word in words) {
           final wordUpper = word.toUpperCase();
 
-          // Passer "TITRE", "DE", "SÉJOUR", "SEJOUR"
           if (wordUpper.contains('TITRE') || wordUpper == 'DE' || wordUpper.contains('SEJOUR')) {
             foundTitre = true;
             continue;
           }
 
-          // Ignorer les codes courts (FRA, M, etc.)
           if (word.length <= 3 && !RegExp(r'^[A-Z]+$').hasMatch(word)) {
             continue;
           }
 
-          // Après avoir trouvé "TITRE DE SÉJOUR", collecter les mots
           if (foundTitre) {
-            // Nettoyer les caractères spéciaux
             final cleaned = word.replaceAll(RegExp(r'[*•.,;:]+'), '');
             if (cleaned.isNotEmpty && cleaned.length > 1) {
               candidateWords.add(cleaned);
@@ -541,23 +396,18 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
 
         print('   Mots candidats: $candidateWords');
 
-        // Le premier mot en MAJUSCULES = NOM
-        // Les suivants en Title Case ou mixte = PRÉNOMS
         if (candidateWords.isNotEmpty) {
           final firstWord = candidateWords[0];
           final firstUpper = firstWord.toUpperCase();
 
-          // Si le premier mot est tout en majuscules = NOM
           if (firstWord == firstUpper && firstWord.length > 2) {
             surname = _cleanName(firstWord);
             print('   ✅ NOM trouvé: "$surname"');
 
-            // Le reste = prénoms
             if (candidateWords.length > 1) {
               final prenomsWords = <String>[];
               for (int j = 1; j < candidateWords.length; j++) {
                 final word = candidateWords[j];
-                // S'arrêter aux codes/labels
                 if (word.length <= 2 || _isLabelLine(word.toUpperCase())) {
                   break;
                 }
@@ -576,7 +426,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       }
     }
 
-    // ✅ MÉTHODE CLASSIQUE : Recherche avec labels
     if (surname.isEmpty || given.isEmpty) {
       print('🔎 Recherche avec labels explicites...');
 
@@ -643,7 +492,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       }
     }
 
-    // Extraction nationalité
     for (int i = 0; i < uppers.length; i++) {
       final u = uppers[i];
       if (u.contains(' NAT')) {
@@ -669,7 +517,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       }
     }
 
-    // Extraction numéro personnel
     for (int i = 0; i < uppers.length; i++) {
       final u = uppers[i];
       if (u.contains('PERSON') && u.contains('NUM')) {
@@ -707,7 +554,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       }
     }
 
-    // Extraction date validité
     for (int i = 0; i < uppers.length; i++) {
       final u = uppers[i];
       if (u.contains('RESIDENCE PERMIT') || u.contains('VALABLE')) {
@@ -890,10 +736,7 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
 
     if (out.isEmpty || RegExp(r'\d').hasMatch(out)) return 'INCONNU';
 
-    final allUpper = out == out.toUpperCase();
-    if (allUpper) return out;
-
-    return _titleCase(out);
+    return out;
   }
 
   bool _looksLikeName(String s) {
@@ -905,16 +748,6 @@ IMPORTANT : Ne remplace PAS un prénom par un autre ! Corrige seulement les acce
       if (w.length < 2) return false;
     }
     return true;
-  }
-
-  String _titleCase(String s) {
-    final parts = s.split(RegExp(r'\s+'));
-    final buf = <String>[];
-    for (final w in parts) {
-      if (w.isEmpty) continue;
-      buf.add(w[0].toUpperCase() + w.substring(1).toLowerCase());
-    }
-    return buf.join(' ');
   }
 
   String? _valueAfterSeparator(String original) {
