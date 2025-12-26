@@ -11,6 +11,7 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         const val CHANNEL = "com.hospi_id_scan.nfc"
+        const val WATCHDOG_CHANNEL = "hospismart/watchdog"
         const val REQ_NFC = 1001
     }
 
@@ -38,6 +39,25 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WATCHDOG_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "restartApp" -> {
+                        result.success(true)
+                        restartApp()
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun restartApp() {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        intent?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(intent)
+        finish()
+        Runtime.getRuntime().exit(0)
     }
 
     private fun startNfcActivity(mode: String, text: String?) {

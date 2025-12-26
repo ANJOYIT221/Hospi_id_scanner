@@ -1,15 +1,9 @@
-// =======================
-// splash_wrapper.dart (SCANNER) - SERVEUR WEBSOCKET PERMANENT
-// Le scanner reste connecté et attend les requêtes de la borne
-// Déclenchement automatique de l'appareil photo à la connexion
-// Animation anti-burn-in : logo 30% + gradient animé toutes les 30s
-// =======================
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'id_scanner_screen.dart';
+import '../services/watchdog_service.dart';
 
 class SplashWrapper extends StatefulWidget {
   const SplashWrapper({super.key});
@@ -26,16 +20,16 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   late AnimationController _slideController;
   late AnimationController _pulseController;
   late AnimationController _connectionPulseController;
-  late AnimationController _floatController;
-  late AnimationController _gradientController; // 🆕 GRADIENT ANIMÉ
+  late AnimationController _gradientController;
+  late AnimationController _opacityController;
 
   late Animation<double> _fadeAnimation;
   late Animation<double> _scaleAnimation;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _pulseAnimation;
   late Animation<double> _connectionPulseAnimation;
-  late Animation<Offset> _floatAnimation;
-  late Animation<double> _gradientAnimation; // 🆕
+  late Animation<double> _gradientAnimation;
+  late Animation<double> _opacityAnimation;
 
   HttpServer? _server;
   WebSocket? _borneSocket;
@@ -48,14 +42,18 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
   bool _autoNavigated = false;
 
-  Timer? _gradientTrigger; // 🆕 TIMER GRADIENT
+  Timer? _gradientTrigger;
+  Timer? _watchdogHeartbeat;
+
+  final WatchdogService _watchdog = WatchdogService();
 
   @override
   void initState() {
     super.initState();
     _initAnimations();
     _startWebSocketServer();
-    _startGradientAnimation(); // 🆕
+    _startGradientAnimation();
+    _startWatchdog();
   }
 
   void _initAnimations() {
@@ -65,17 +63,15 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     _pulseController = AnimationController(duration: const Duration(milliseconds: 2000), vsync: this)..repeat(reverse: true);
     _connectionPulseController = AnimationController(duration: const Duration(milliseconds: 1500), vsync: this)..repeat(reverse: true);
 
-    // 🆕 ANIMATION LOGO 30% (anti-burn-in efficace)
-    _floatController = AnimationController(
-      duration: const Duration(seconds: 20),
-      vsync: this,
-    )..repeat(reverse: true);
-
-    // 🆕 ANIMATION GRADIENT (toutes les 30s)
     _gradientController = AnimationController(
       duration: const Duration(seconds: 3),
       vsync: this,
     );
+
+    _opacityController = AnimationController(
+      duration: const Duration(seconds: 8),
+      vsync: this,
+    )..repeat(reverse: true);
 
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
@@ -93,16 +89,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       CurvedAnimation(parent: _connectionPulseController, curve: Curves.easeInOut),
     );
 
-    // 🆕 MOUVEMENT LOGO 15% dans toutes les directions (30% total)
-    _floatAnimation = Tween<Offset>(
-      begin: const Offset(-0.15, -0.15),
-      end: const Offset(0.15, 0.15),
-    ).animate(CurvedAnimation(
-      parent: _floatController,
-      curve: Curves.easeInOut,
-    ));
-
-    // 🆕 GRADIENT SHIFT
     _gradientAnimation = Tween<double>(
       begin: 0.0,
       end: 1.0,
@@ -111,12 +97,19 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       curve: Curves.easeInOut,
     ));
 
+    _opacityAnimation = Tween<double>(
+      begin: 0.95,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _opacityController,
+      curve: Curves.easeInOut,
+    ));
+
     _fadeController.forward();
     Future.delayed(const Duration(milliseconds: 300), () => _scaleController.forward());
     Future.delayed(const Duration(milliseconds: 600), () => _slideController.forward());
   }
 
-  // 🆕 ANIMATION GRADIENT TOUTES LES 30 SECONDES
   void _startGradientAnimation() {
     _gradientTrigger = Timer.periodic(const Duration(seconds: 30), (timer) {
       if (mounted && showLanding) {
@@ -127,6 +120,16 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         });
       }
     });
+  }
+
+  void _startWatchdog() {
+    _watchdog.start();
+
+    _watchdogHeartbeat = Timer.periodic(const Duration(seconds: 5), (_) {
+      _watchdog.heartbeat();
+    });
+
+    _watchdog.logInfo('Scanner app démarrée');
   }
 
   Future<void> _startWebSocketServer() async {
@@ -141,6 +144,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       print('✅ Adresse: ws://$_localIP:$_serverPort');
       print('✅ ========================================');
 
+      _watchdog.logInfo('Serveur WebSocket démarré sur $_localIP:$_serverPort');
+
       _server!.transform(WebSocketTransformer()).listen((WebSocket socket) {
         print('🔗 BORNE connectée !');
 
@@ -148,6 +153,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           _borneSocket = socket;
           _borneConnected = true;
         });
+
+        _watchdog.logInfo('Borne connectée');
 
         if (!_autoNavigated && mounted && showLanding) {
           _autoNavigated = true;
@@ -161,6 +168,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           _handleBorneMessage,
           onDone: () {
             print('🔌 BORNE déconnectée');
+            _watchdog.logInfo('Borne déconnectée');
             setState(() {
               _borneConnected = false;
               _borneSocket = null;
@@ -169,7 +177,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
             });
           },
           onError: (error) {
-            print('❌ Erreur WebSocket: $error');
+            _watchdog.logError('WebSocket', error);
             setState(() {
               _borneConnected = false;
               _borneSocket = null;
@@ -182,6 +190,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
     } catch (e) {
       print('❌ Erreur démarrage serveur: $e');
+      _watchdog.logError('Démarrage serveur', e);
       setState(() => _isServerRunning = false);
     }
   }
@@ -201,7 +210,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         }
       }
     } catch (e) {
-      print('❌ Erreur récupération IP: $e');
+      _watchdog.logError('Récupération IP', e);
     }
     return null;
   }
@@ -218,6 +227,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
       final action = data['action'];
       print('📨 Action: $action');
+      _watchdog.heartbeat();
 
       if (action == 'start_checkin') {
         print('🚀 Demande de check-in reçue');
@@ -232,7 +242,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       print('⚠️ Action non gérée: $action');
 
     } catch (e) {
-      print('❌ Erreur handleBorneMessage: $e');
+      _watchdog.logError('handleBorneMessage', e);
     }
   }
 
@@ -245,8 +255,9 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     try {
       _borneSocket!.add(jsonEncode(data));
       print('📤 SCANNER → BORNE : ${data['action']}');
+      _watchdog.heartbeat();
     } catch (e) {
-      print('❌ Erreur envoi message: $e');
+      _watchdog.logError('Envoi message', e);
     }
   }
 
@@ -254,6 +265,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     setState(() {
       showLanding = false;
     });
+    _watchdog.logInfo('Navigation vers IdScannerScreen');
   }
 
   void _returnToSplash() {
@@ -261,6 +273,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       showLanding = true;
       _autoNavigated = false;
     });
+    _watchdog.logInfo('Retour au splash screen');
   }
 
   @override
@@ -270,11 +283,13 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     _slideController.dispose();
     _pulseController.dispose();
     _connectionPulseController.dispose();
-    _floatController.dispose();
-    _gradientController.dispose(); // 🆕
-    _gradientTrigger?.cancel(); // 🆕
+    _gradientController.dispose();
+    _opacityController.dispose();
+    _gradientTrigger?.cancel();
+    _watchdogHeartbeat?.cancel();
     _server?.close();
     _borneSocket?.close();
+    _watchdog.stop();
     super.dispose();
   }
 
@@ -298,7 +313,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   Widget _buildSplashScreen() {
     return Stack(
       children: [
-        // 🆕 GRADIENT ANIMÉ
         AnimatedBuilder(
           animation: _gradientAnimation,
           builder: (context, child) {
@@ -453,30 +467,34 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // 🆕 LOGO AVEC MOUVEMENT 30% (anti-burn-in efficace)
-              SlideTransition(
-                position: _floatAnimation,
-                child: ScaleTransition(
-                  scale: _scaleAnimation,
-                  child: Container(
-                    padding: const EdgeInsets.all(30),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white.withOpacity(0.1),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.white.withOpacity(0.2),
-                          blurRadius: 40,
-                          spreadRadius: 10,
+              ScaleTransition(
+                scale: _scaleAnimation,
+                child: AnimatedBuilder(
+                  animation: _opacityAnimation,
+                  builder: (context, child) {
+                    return Opacity(
+                      opacity: _opacityAnimation.value,
+                      child: Container(
+                        padding: const EdgeInsets.all(30),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withOpacity(0.1),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.white.withOpacity(0.2),
+                              blurRadius: 40,
+                              spreadRadius: 10,
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.document_scanner_outlined,
-                      size: 100,
-                      color: Colors.white,
-                    ),
-                  ),
+                        child: const Icon(
+                          Icons.document_scanner_outlined,
+                          size: 100,
+                          color: Colors.white,
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 50),
