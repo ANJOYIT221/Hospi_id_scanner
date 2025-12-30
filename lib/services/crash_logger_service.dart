@@ -9,9 +9,6 @@ class CrashLoggerService {
   factory CrashLoggerService() => _instance;
   CrashLoggerService._internal();
 
-  static const String _logFolderName = 'HospiSmart';
-  static const String _crashFolderName = 'crash_logs';
-
   bool _isInitialized = false;
   Directory? _crashLogsDir;
 
@@ -19,14 +16,9 @@ class CrashLoggerService {
     if (_isInitialized) return;
 
     try {
-      final Directory externalDir = Directory('/storage/emulated/0');
+      final Directory appDir = await getApplicationDocumentsDirectory();
 
-      final Directory hospiDir = Directory('${externalDir.path}/$_logFolderName');
-      if (!await hospiDir.exists()) {
-        await hospiDir.create(recursive: true);
-      }
-
-      _crashLogsDir = Directory('${hospiDir.path}/$_crashFolderName');
+      _crashLogsDir = Directory('${appDir.path}/crash_logs');
       if (!await _crashLogsDir!.exists()) {
         await _crashLogsDir!.create(recursive: true);
       }
@@ -119,10 +111,6 @@ class CrashLoggerService {
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
 
-      // Version 5.x+ retourne List<ConnectivityResult>
-      // Version 4.x retourne ConnectivityResult
-
-      // On vérifie si c'est une liste
       if (connectivityResult is List) {
         if (connectivityResult.contains(ConnectivityResult.wifi)) {
           return 'WiFi connecté';
@@ -134,7 +122,6 @@ class CrashLoggerService {
           return 'Hors ligne';
         }
       } else {
-        // Ancienne version (4.x)
         if (connectivityResult == ConnectivityResult.wifi) {
           return 'WiFi connecté';
         } else if (connectivityResult == ConnectivityResult.mobile) {
@@ -149,6 +136,7 @@ class CrashLoggerService {
       return 'Erreur vérification';
     }
   }
+
   String _formatTimestamp(DateTime dt) {
     return '${dt.year}-${_pad(dt.month)}-${_pad(dt.day)} '
         '${_pad(dt.hour)}:${_pad(dt.minute)}:${_pad(dt.second)}';

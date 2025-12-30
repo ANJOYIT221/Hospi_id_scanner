@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'id_scanner_screen.dart';
 import '../services/watchdog_service.dart';
 import '../services/crash_logger_service.dart';
@@ -50,15 +51,16 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   final WatchdogService _watchdog = WatchdogService();
   final CrashLoggerService _crashLogger = CrashLoggerService();
 
+  int _longPressCount = 0;
+  Timer? _longPressResetTimer;
+  bool _showExitCounter = false;
+
   int _tapCount = 0;
   Timer? _tapResetTimer;
-  bool _showTapCounter = false;
-
-  int _logsTapCount = 0;
-  Timer? _logsTapTimer;
-  bool _showLogsTapCounter = false;
+  bool _showLogsCounter = false;
 
   static const Color errorRed = Color(0xFFFF3B30);
+  static const Color successGreen = Color(0xFF34C759);
 
   @override
   void initState() {
@@ -72,73 +74,80 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
   Future<void> _initCrashLogger() async {
     await _crashLogger.initialize();
-    print('✅ Crash Logger initialisé');
+    print('✅ Crash Logger initialisé (Scanner)');
   }
 
-  void _handleKioskTap() {
+  void _handleLongPress() {
+    _longPressCount++;
+    _longPressResetTimer?.cancel();
+
+    if (_longPressCount == 1) {
+      setState(() => _showExitCounter = true);
+    }
+
+    if (_longPressCount >= 7) {
+      _exitApp();
+      return;
+    }
+
+    _longPressResetTimer = Timer(const Duration(seconds: 3), () {
+      setState(() {
+        _longPressCount = 0;
+        _showExitCounter = false;
+      });
+    });
+  }
+
+  void _handleTap() {
     _tapCount++;
     _tapResetTimer?.cancel();
 
     if (_tapCount == 1) {
-      setState(() => _showTapCounter = true);
+      setState(() => _showLogsCounter = true);
     }
 
-    if (_tapCount >= 7) {
-      _exitKioskMode();
+    if (_tapCount >= 5) {
+      _openCrashLogs();
       return;
     }
 
     _tapResetTimer = Timer(const Duration(seconds: 3), () {
       setState(() {
         _tapCount = 0;
-        _showTapCounter = false;
+        _showLogsCounter = false;
       });
     });
   }
 
-  void _handleLogsAccess() {
-    _logsTapCount++;
-    _logsTapTimer?.cancel();
-
-    if (_logsTapCount == 1) {
-      setState(() => _showLogsTapCounter = true);
-    }
-
-    if (_logsTapCount >= 5) {
-      setState(() {
-        _logsTapCount = 0;
-        _showLogsTapCounter = false;
-      });
-      _logsTapTimer?.cancel();
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const CrashLogsScreen()),
-      );
-      return;
-    }
-
-    _logsTapTimer = Timer(const Duration(seconds: 3), () {
-      setState(() {
-        _logsTapCount = 0;
-        _showLogsTapCounter = false;
-      });
-    });
-  }
-
-  Future<void> _exitKioskMode() async {
-    _tapResetTimer?.cancel();
+  Future<void> _exitApp() async {
+    _longPressResetTimer?.cancel();
     setState(() {
-      _tapCount = 0;
-      _showTapCounter = false;
+      _longPressCount = 0;
+      _showExitCounter = false;
     });
 
     try {
-      print('✅ App mise en arrière-plan');
+      print('🚪 Sortie de l\'application (7 long press détectés)');
+      SystemNavigator.pop();
     } catch (e) {
-      print('❌ Erreur mise en arrière-plan: $e');
+      print('❌ Erreur sortie app: $e');
       _showSnackBar("Erreur lors de la sortie", errorRed);
     }
+  }
+
+  void _openCrashLogs() {
+    print('📋 Ouverture des Crash Logs (5 taps détectés)');
+
+    setState(() {
+      _tapCount = 0;
+      _showLogsCounter = false;
+    });
+    _tapResetTimer?.cancel();
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CrashLogsScreen()),
+    );
   }
 
   void _showSnackBar(String msg, Color color) {
@@ -258,7 +267,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
         if (!_autoNavigated && mounted && showLanding) {
           _autoNavigated = true;
           print('📸 Déclenchement automatique de l\'écran de scan');
-          _handleTap();
+          _handleNavigation();
         }
 
         _broadcastStream = socket.asBroadcastStream();
@@ -333,7 +342,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
         if (!_autoNavigated && mounted && showLanding) {
           _autoNavigated = true;
-          _handleTap();
+          _handleNavigation();
         }
         return;
       }
@@ -360,7 +369,7 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     }
   }
 
-  void _handleTap() {
+  void _handleNavigation() {
     setState(() {
       showLanding = false;
     });
@@ -386,8 +395,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     _opacityController.dispose();
     _gradientTrigger?.cancel();
     _watchdogHeartbeat?.cancel();
+    _longPressResetTimer?.cancel();
     _tapResetTimer?.cancel();
-    _logsTapTimer?.cancel();
     _server?.close();
     _borneSocket?.close();
     _watchdog.stop();
@@ -397,8 +406,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onLongPress: showLanding ? _handleKioskTap : null,
-      onTap: showLanding ? _handleLogsAccess : null,
+      onLongPress: showLanding ? _handleLongPress : null,
+      onTap: showLanding ? _handleTap : null,
       child: Scaffold(
         body: showLanding
             ? _buildSplashScreen()
@@ -565,65 +574,59 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
           ),
         ),
 
-        if (_showTapCounter)
+        if (_showExitCounter)
           Positioned(
             top: 120,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.red.withOpacity(0.4),
-                      blurRadius: 15,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: Text(
-                  'Exit: $_tapCount/7',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+            left: 20,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.red.withOpacity(0.5),
+                    blurRadius: 10,
+                    spreadRadius: 2,
                   ),
+                ],
+              ),
+              child: Text(
+                'Exit: $_longPressCount/7',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
           ),
 
-        if (_showLogsTapCounter)
+        if (_showLogsCounter)
           Positioned(
-            top: 180,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.9),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.orange.withOpacity(0.4),
-                      blurRadius: 15,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: Text(
-                  'Logs: $_logsTapCount/5',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
+            top: 120,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.orange.withOpacity(0.5),
+                    blurRadius: 10,
+                    spreadRadius: 2,
                   ),
+                ],
+              ),
+              child: Text(
+                'Logs: $_tapCount/5',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
             ),
