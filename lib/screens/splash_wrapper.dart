@@ -4,6 +4,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'id_scanner_screen.dart';
 import '../services/watchdog_service.dart';
+import '../services/crash_logger_service.dart';
+import '../screens/crash_logs_screen.dart';
 
 class SplashWrapper extends StatefulWidget {
   const SplashWrapper({super.key});
@@ -46,6 +48,17 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   Timer? _watchdogHeartbeat;
 
   final WatchdogService _watchdog = WatchdogService();
+  final CrashLoggerService _crashLogger = CrashLoggerService();
+
+  int _tapCount = 0;
+  Timer? _tapResetTimer;
+  bool _showTapCounter = false;
+
+  int _logsTapCount = 0;
+  Timer? _logsTapTimer;
+  bool _showLogsTapCounter = false;
+
+  static const Color errorRed = Color(0xFFFF3B30);
 
   @override
   void initState() {
@@ -54,6 +67,92 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     _startWebSocketServer();
     _startGradientAnimation();
     _startWatchdog();
+    _initCrashLogger();
+  }
+
+  Future<void> _initCrashLogger() async {
+    await _crashLogger.initialize();
+    print('✅ Crash Logger initialisé');
+  }
+
+  void _handleKioskTap() {
+    _tapCount++;
+    _tapResetTimer?.cancel();
+
+    if (_tapCount == 1) {
+      setState(() => _showTapCounter = true);
+    }
+
+    if (_tapCount >= 7) {
+      _exitKioskMode();
+      return;
+    }
+
+    _tapResetTimer = Timer(const Duration(seconds: 3), () {
+      setState(() {
+        _tapCount = 0;
+        _showTapCounter = false;
+      });
+    });
+  }
+
+  void _handleLogsAccess() {
+    _logsTapCount++;
+    _logsTapTimer?.cancel();
+
+    if (_logsTapCount == 1) {
+      setState(() => _showLogsTapCounter = true);
+    }
+
+    if (_logsTapCount >= 5) {
+      setState(() {
+        _logsTapCount = 0;
+        _showLogsTapCounter = false;
+      });
+      _logsTapTimer?.cancel();
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const CrashLogsScreen()),
+      );
+      return;
+    }
+
+    _logsTapTimer = Timer(const Duration(seconds: 3), () {
+      setState(() {
+        _logsTapCount = 0;
+        _showLogsTapCounter = false;
+      });
+    });
+  }
+
+  Future<void> _exitKioskMode() async {
+    _tapResetTimer?.cancel();
+    setState(() {
+      _tapCount = 0;
+      _showTapCounter = false;
+    });
+
+    try {
+      print('✅ App mise en arrière-plan');
+    } catch (e) {
+      print('❌ Erreur mise en arrière-plan: $e');
+      _showSnackBar("Erreur lors de la sortie", errorRed);
+    }
+  }
+
+  void _showSnackBar(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.all(14),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   void _initAnimations() {
@@ -287,6 +386,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     _opacityController.dispose();
     _gradientTrigger?.cancel();
     _watchdogHeartbeat?.cancel();
+    _tapResetTimer?.cancel();
+    _logsTapTimer?.cancel();
     _server?.close();
     _borneSocket?.close();
     _watchdog.stop();
@@ -296,7 +397,8 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onLongPress: showLanding ? _handleTap : null,
+      onLongPress: showLanding ? _handleKioskTap : null,
+      onTap: showLanding ? _handleLogsAccess : null,
       child: Scaffold(
         body: showLanding
             ? _buildSplashScreen()
@@ -462,6 +564,70 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
             ),
           ),
         ),
+
+        if (_showTapCounter)
+          Positioned(
+            top: 120,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.4),
+                      blurRadius: 15,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Text(
+                  'Exit: $_tapCount/7',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        if (_showLogsTapCounter)
+          Positioned(
+            top: 180,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.orange.withOpacity(0.4),
+                      blurRadius: 15,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Text(
+                  'Logs: $_logsTapCount/5',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
 
         Center(
           child: Column(

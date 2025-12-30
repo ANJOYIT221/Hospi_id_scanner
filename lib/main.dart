@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:hospi_id_scanner/screens/splash_wrapper.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:hospi_id_scanner/services/crash_logger_service.dart';
 
 Future<void> main() async {
   await dotenv.load(fileName: ".env");
+  await CrashLoggerService().initialize();
 
   runApp(const MyApp());
 }

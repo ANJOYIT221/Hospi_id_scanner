@@ -14,6 +14,7 @@ dependencies:
   http:
   google_mlkit_text_recognition:
   google_mlkit_document_scanner:
+  connectivity_plus: ^6.0.3
   flutter_mrz_scanner:
   mrz_parser:
   flutter_nfc_kit: ^3.0.0
@@ -31,6 +32,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_tts: ^4.2.2
   shared_preferences: ^2.2.2
+
   crypto: ^3.0.3
   # ✅ NOUVELLES - À AJOUTER
   image: ^4.1.7  # Prétraitement d'image
