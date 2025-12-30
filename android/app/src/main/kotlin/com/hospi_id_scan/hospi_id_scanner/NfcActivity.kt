@@ -63,6 +63,7 @@ class NfcActivity : Activity() {
                 "read" -> performRead(tag)
                 "write" -> performWrite(tag, writeText ?: "")
                 "erase" -> performErase(tag)
+                "readAndErase" -> performReadAndErase(tag)
             }
         }
     }
@@ -128,6 +129,35 @@ class NfcActivity : Activity() {
             }
         } catch (e: Exception) {
             finishWithError("Erase error: ${e.localizedMessage}")
+        }
+    }
+
+    private fun performReadAndErase(tag: Tag) {
+        try {
+            val ndef = Ndef.get(tag) ?: run {
+                finishWithError("NDEF not supported")
+                return
+            }
+
+            ndef.connect()
+
+            val msg = ndef.cachedNdefMessage
+            val readData = if (msg != null && msg.records.isNotEmpty()) {
+                msg.records.joinToString("\n") { String(it.payload.drop(3).toByteArray()) }
+            } else {
+                ""
+            }
+
+            val emptyRecord = NdefRecord(NdefRecord.TNF_EMPTY, null, null, null)
+            val emptyMessage = NdefMessage(arrayOf(emptyRecord))
+            ndef.writeNdefMessage(emptyMessage)
+
+            ndef.close()
+
+            finishWithSuccess(readData)
+
+        } catch (e: Exception) {
+            finishWithError("ReadAndErase error: ${e.localizedMessage}")
         }
     }
 

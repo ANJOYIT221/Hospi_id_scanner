@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'id_scanner_screen.dart';
+import 'checkout.dart';
 import '../services/watchdog_service.dart';
 import '../services/crash_logger_service.dart';
 import '../screens/crash_logs_screen.dart';
@@ -17,6 +18,7 @@ class SplashWrapper extends StatefulWidget {
 
 class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateMixin {
   bool showLanding = true;
+  String _currentScreen = 'checkin';
 
   late AnimationController _fadeController;
   late AnimationController _scaleController;
@@ -264,12 +266,6 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
         _watchdog.logInfo('Borne connectée');
 
-        if (!_autoNavigated && mounted && showLanding) {
-          _autoNavigated = true;
-          print('📸 Déclenchement automatique de l\'écran de scan');
-          _handleNavigation();
-        }
-
         _broadcastStream = socket.asBroadcastStream();
 
         _broadcastStream!.listen(
@@ -342,6 +338,18 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
 
         if (!_autoNavigated && mounted && showLanding) {
           _autoNavigated = true;
+          _currentScreen = 'checkin';
+          _handleNavigation();
+        }
+        return;
+      }
+
+      if (action == 'start_checkout') {
+        print('🚀 Demande de checkout reçue');
+
+        if (!_autoNavigated && mounted && showLanding) {
+          _autoNavigated = true;
+          _currentScreen = 'checkout';
           _handleNavigation();
         }
         return;
@@ -373,13 +381,14 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
     setState(() {
       showLanding = false;
     });
-    _watchdog.logInfo('Navigation vers IdScannerScreen');
+    _watchdog.logInfo('Navigation vers ${_currentScreen == 'checkout' ? 'CheckoutScreen' : 'IdScannerScreen'}');
   }
 
   void _returnToSplash() {
     setState(() {
       showLanding = true;
       _autoNavigated = false;
+      _currentScreen = 'checkin';
     });
     _watchdog.logInfo('Retour au splash screen');
   }
@@ -411,6 +420,12 @@ class _SplashWrapperState extends State<SplashWrapper> with TickerProviderStateM
       child: Scaffold(
         body: showLanding
             ? _buildSplashScreen()
+            : _currentScreen == 'checkout'
+            ? CheckoutScreen(
+          socket: _borneSocket,
+          isConnected: _borneConnected,
+          onReturnToSplash: _returnToSplash,
+        )
             : IdScannerScreen(
           broadcastStream: _broadcastStream,
           webSocket: _borneSocket,

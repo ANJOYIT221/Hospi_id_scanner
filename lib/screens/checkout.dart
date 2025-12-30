@@ -1,8 +1,3 @@
-// =======================
-// checkout_screen.dart
-// Effacement NFC automatique dès ouverture (Check-out)
-// =======================
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -37,8 +32,6 @@ class _CheckoutScreenState extends State<CheckoutScreen>
   bool _isProcessing = false;
   bool _isSpeaking = false;
   bool _checkoutSuccess = false;
-  WebSocket? _socket;
-  bool _isConnected = false;
   Timer? _inactivityTimer;
 
   late final AnimationController _fadeController;
@@ -53,9 +46,6 @@ class _CheckoutScreenState extends State<CheckoutScreen>
   static const Color textDark = Color(0xFF1C1C1E);
   static const Color textMuted = Color(0xFF8E8E93);
 
-  bool get _connected =>
-      (_socket?.readyState == WebSocket.open) || _isConnected || widget.isConnected;
-
   @override
   void initState() {
     super.initState();
@@ -63,14 +53,10 @@ class _CheckoutScreenState extends State<CheckoutScreen>
     _initTts();
     _resetInactivityTimer();
 
-    _socket = widget.socket;
-    _isConnected = widget.isConnected || (_socket?.readyState == WebSocket.open);
-
-    // Lecture automatique dès ouverture
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _speak("Bienvenue au check-out. Approchez votre carte de chambre maintenant.");
       await Future.delayed(const Duration(seconds: 1));
-      _performCheckout(); // 🚀 lancement auto
+      _performCheckout();
     });
   }
 
@@ -116,9 +102,6 @@ class _CheckoutScreenState extends State<CheckoutScreen>
     _successController = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
   }
 
-  // ======================================================
-  // 🚀 Check-out automatique : dès qu’on ouvre la page
-  // ======================================================
   Future<void> _performCheckout() async {
     if (_isProcessing) return;
 
@@ -130,9 +113,15 @@ class _CheckoutScreenState extends State<CheckoutScreen>
     _fadeController.forward();
 
     try {
-      await _nfcChannel.invokeMethod('eraseTag'); // 🔥 efface dès scan
+      print('🔥 SCANNER - Appel readAndEraseTag');
+
+      final result = await _nfcChannel.invokeMethod('readAndEraseTag');
 
       if (!mounted) return;
+
+      print('✅ SCANNER - Lecture/Effacement réussi');
+      print('📦 Données lues: $result');
+
       setState(() {
         _isProcessing = false;
         _checkoutSuccess = true;
@@ -141,19 +130,40 @@ class _CheckoutScreenState extends State<CheckoutScreen>
       _successController.forward();
       _showSnackBar("✅ Check-out effectué avec succès !", successGreen);
       await _speak("Check-out effectué avec succès. Merci de votre séjour !");
-      _sendToReceiver({"action": "checkout_complete"});
 
-      await Future.delayed(const Duration(seconds: 3));
-      widget.onReturnToSplash?.call();
+      Map<String, dynamic>? cardData;
+      if (result != null && result is String) {
+        try {
+          cardData = jsonDecode(result);
+          print('✅ JSON parsé: $cardData');
+        } catch (e) {
+          print('⚠️ Erreur parsing JSON: $e');
+        }
+      }
+
+      _sendToBorne({
+        "action": "checkout_complete",
+        if (cardData != null) "cardData": cardData,
+      });
+
+      await Future.delayed(const Duration(seconds: 2));
+
+      if (mounted) {
+        widget.onReturnToSplash?.call();
+      }
+
     } on PlatformException catch (e) {
       if (!mounted) return;
+
       setState(() => _isProcessing = false);
       _fadeController.reverse();
+
+      print('❌ SCANNER - Erreur NFC: ${e.code} - ${e.message}');
 
       if (e.code == 'TAG_NOT_FOUND') {
         _showSnackBar("⚠️ Aucune carte détectée. Réessayez.", errorRed);
         await _speak("Aucune carte détectée. Veuillez réessayer.");
-        // 🔁 relancer écoute automatiquement
+
         await Future.delayed(const Duration(seconds: 2));
         _performCheckout();
       } else {
@@ -162,8 +172,11 @@ class _CheckoutScreenState extends State<CheckoutScreen>
       }
     } catch (e) {
       if (!mounted) return;
+
       setState(() => _isProcessing = false);
       _fadeController.reverse();
+
+      print('❌ SCANNER - Erreur inattendue: $e');
       _showSnackBar("❌ Erreur inattendue : $e", errorRed);
       await _speak("Erreur inattendue. Veuillez réessayer.");
     }
@@ -182,14 +195,20 @@ class _CheckoutScreenState extends State<CheckoutScreen>
     );
   }
 
-  void _sendToReceiver(Map<String, dynamic> data) {
-    if (_socket == null || _socket!.readyState != WebSocket.open) return;
-    _socket!.add(jsonEncode(data));
+  void _sendToBorne(Map<String, dynamic> data) {
+    if (widget.socket == null || widget.socket!.readyState != WebSocket.open) {
+      print('❌ SCANNER - Borne non connectée');
+      return;
+    }
+
+    try {
+      widget.socket!.add(jsonEncode(data));
+      print('📤 SCANNER → BORNE : ${data['action']}');
+    } catch (e) {
+      print('❌ SCANNER - Erreur envoi: $e');
+    }
   }
 
-  // ======================================================
-  // UI
-  // ======================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -197,6 +216,10 @@ class _CheckoutScreenState extends State<CheckoutScreen>
       appBar: AppBar(
         backgroundColor: bgLight,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+          onPressed: widget.onReturnToSplash,
+        ),
         title: const Text(
           "CHECK-OUT",
           style: TextStyle(fontWeight: FontWeight.bold, color: textDark),

@@ -19,7 +19,7 @@ class MyApp extends StatelessWidget {
       title: 'Check-in HospiSmart',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: SplashWrapper(), // ← ici on met la landing page
+      home:  SplashWrapper(),
     );
   }
 }

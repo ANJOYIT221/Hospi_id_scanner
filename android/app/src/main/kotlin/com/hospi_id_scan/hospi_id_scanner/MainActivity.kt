@@ -36,6 +36,10 @@ class MainActivity : FlutterActivity() {
                         pendingResult = result
                         startNfcActivity("erase", null)
                     }
+                    "readAndEraseTag" -> {
+                        pendingResult = result
+                        startNfcActivity("readAndErase", null)
+                    }
                     else -> result.notImplemented()
                 }
             }
