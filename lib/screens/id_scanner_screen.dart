@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'document_camera_screen.dart';
+import 'payment_screen.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../services/ocr_service.dart';
+import '../services/payment_service.dart';
 
 class IdScannerScreen extends StatefulWidget {
   final Stream<dynamic>? broadcastStream;
@@ -42,6 +44,7 @@ class _IdScannerScreenState extends State<IdScannerScreen>
   bool _isProcessing = false;
 
   Map<String, String>? _bookingToWrite;
+  double _taxAmount = 0.0;
 
   int _nfcWriteAttempts = 0;
   static const int _maxNfcAttempts = 5;
@@ -129,19 +132,17 @@ class _IdScannerScreenState extends State<IdScannerScreen>
       final action = data['action'];
       print('📨 Action: $action');
 
-      // ===== 🆕 RELANCER LE SCAN =====
       if (action == 'retry_scan') {
         print('🔄 Demande de réessai du scan reçue');
 
-        // Réinitialiser l'état
         setState(() {
           _selectedImage = null;
           _extracted = null;
           _isProcessing = false;
           _bookingToWrite = null;
+          _taxAmount = 0.0;
         });
 
-        // Relancer l'appareil photo après un court délai
         Future.delayed(const Duration(milliseconds: 300), () {
           if (mounted) {
             print('📸 Relancement de l\'appareil photo');
@@ -166,16 +167,187 @@ class _IdScannerScreenState extends State<IdScannerScreen>
           return;
         }
 
+        final rawTaxAmount = data['taxAmount'];
+        if (rawTaxAmount != null) {
+          if (rawTaxAmount is double) {
+            _taxAmount = rawTaxAmount;
+          } else if (rawTaxAmount is int) {
+            _taxAmount = rawTaxAmount.toDouble();
+          } else if (rawTaxAmount is String) {
+            _taxAmount = double.tryParse(rawTaxAmount) ?? 0.0;
+          }
+        }
+
         print('✅ Réservation reçue: ${_bookingToWrite!['surname']} ${_bookingToWrite!['name']}');
+        print('💰 Montant taxe de séjour: $_taxAmount €');
+
         _showSnackBar("✅ Réservation confirmée !", successGreen);
 
-        _writeToNfc();
+        if (_taxAmount > 0) {
+          print('💳 Navigation vers l\'écran de paiement');
+          _navigateToPayment();
+        } else {
+          print('⚠️ Pas de taxe à payer - Gravure directe');
+          _writeToNfc();
+        }
+
         return;
       }
 
     } catch (e) {
       print('❌ Erreur handleBorneMessage: $e');
     }
+  }
+
+  Future<void> _navigateToPayment() async {
+    if (_bookingToWrite == null) {
+      print('⚠️ Aucune réservation à payer');
+      return;
+    }
+
+    _onUserActivity();
+
+    print('🚀 ========== NAVIGATION PAIEMENT ==========');
+    print('💰 Montant: $_taxAmount €');
+    print('👤 Client: ${_bookingToWrite!['surname']} ${_bookingToWrite!['name']}');
+    print('==========================================');
+
+    final paymentResult = await Navigator.push<PaymentResult>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PaymentScreen(
+          booking: _bookingToWrite!,
+          taxAmount: _taxAmount,
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (paymentResult == null) {
+      print('⚠️ Paiement annulé ou écran fermé');
+      _showSnackBar("⚠️ Paiement annulé", warningAmber);
+
+      _sendToReceiver({
+        "action": "payment_cancelled",
+        "booking": Map<String, dynamic>.from(_bookingToWrite!),
+      });
+
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted) {
+        widget.onReturnToSplash?.call();
+      }
+      return;
+    }
+
+    if (paymentResult.success) {
+      print('✅ ========== PAIEMENT RÉUSSI ==========');
+      print('📝 Transaction: ${paymentResult.transactionId}');
+      print('💳 Carte: ${paymentResult.cardType} ${paymentResult.cardNumber}');
+      print('=========================================');
+
+      _showSnackBar("✅ Paiement accepté !", successGreen);
+
+      _sendToReceiver({
+        "action": "payment_success",
+        "booking": Map<String, dynamic>.from(_bookingToWrite!),
+        "payment": paymentResult.toJson(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      print('🔥 Lancement de la gravure NFC...');
+      _writeToNfc();
+
+    } else {
+      print('❌ ========== PAIEMENT ÉCHOUÉ ==========');
+      print('📝 Erreur: ${paymentResult.errorMessage}');
+      print('=========================================');
+
+      _showSnackBar("❌ Paiement refusé", errorRed);
+
+      _sendToReceiver({
+        "action": "payment_failed",
+        "booking": Map<String, dynamic>.from(_bookingToWrite!),
+        "error": paymentResult.errorMessage,
+      });
+
+      final retry = await _showPaymentErrorDialog(paymentResult.errorMessage);
+
+      if (retry == true && mounted) {
+        print('🔄 Réessai du paiement...');
+        _navigateToPayment();
+      } else {
+        print('🚫 Abandon du processus');
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) {
+          widget.onReturnToSplash?.call();
+        }
+      }
+    }
+  }
+
+  Future<bool?> _showPaymentErrorDialog(String? errorMessage) async {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: cardWhite,
+        title: Row(
+          children: const [
+            Icon(Icons.error_outline, color: errorRed, size: 32),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Paiement refusé',
+                style: TextStyle(color: errorRed, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              errorMessage ?? 'Erreur inconnue',
+              style: const TextStyle(color: textDark, fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Voulez-vous réessayer le paiement ?',
+              style: TextStyle(
+                color: textMuted,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text(
+              'Annuler',
+              style: TextStyle(color: textMuted, fontWeight: FontWeight.w700),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryBlue,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text(
+              'Réessayer',
+              style: TextStyle(fontWeight: FontWeight.w700, color: cardWhite),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickImage(ImageSource src) async {

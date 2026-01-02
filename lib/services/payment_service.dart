@@ -1,32 +1,22 @@
 import 'package:flutter/services.dart';
 
-/// Service de gestion des paiements via le lecteur de carte Sunmi
-/// Utilise le plugin itc_sunmi_card_reader pour :
-/// - Lire les cartes (EMV, sans contact, piste magnétique)
-/// - Traiter les paiements
-/// - Imprimer les reçus
 class PaymentService {
-  static const MethodChannel _channel = MethodChannel('itc_sunmi_card_reader');
+  static const MethodChannel _channel = MethodChannel('com.hospi_id_scanner/payment');
 
-  /// Initialise le lecteur de carte Sunmi
   Future<bool> initialize() async {
     try {
-      final result = await _channel.invokeMethod('initialize');
-      print('✅ Lecteur de carte initialisé: $result');
-      return result == true;
+      final result = await _channel.invokeMethod<bool>('initialize');
+      print('✅ Terminal de paiement initialisé: $result');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('❌ Erreur initialisation terminal: ${e.code} - ${e.message}');
+      return false;
     } catch (e) {
-      print('❌ Erreur initialisation lecteur: $e');
+      print('❌ Erreur inattendue initialisation: $e');
       return false;
     }
   }
 
-  /// Lance un paiement avec le montant spécifié
-  ///
-  /// [amount] : Montant en euros (ex: 1.50 pour 1,50€)
-  /// [currency] : Code devise (EUR par défaut)
-  /// [paymentMethod] : 'chip' pour puce, 'contactless' pour sans contact, 'any' pour les deux
-  ///
-  /// Retourne un [PaymentResult] avec les détails de la transaction
   Future<PaymentResult> processPayment({
     required double amount,
     String currency = 'EUR',
@@ -43,7 +33,7 @@ class PaymentService {
         'paymentMethod': paymentMethod,
       };
 
-      final result = await _channel.invokeMethod('processPayment', args);
+      final result = await _channel.invokeMethod<Map>('processPayment', args);
 
       if (result == null) {
         print('❌ Résultat null du plugin');
@@ -52,19 +42,19 @@ class PaymentService {
 
       print('📥 Résultat brut: $result');
 
-      // Parse du résultat
-      final status = result['status'] ?? 'error';
+      final resultMap = Map<String, dynamic>.from(result);
+      final status = resultMap['status'] ?? 'error';
 
       if (status == 'success') {
         final paymentResult = PaymentResult.success(
-          transactionId: result['transactionId'] ?? _generateTransactionId(),
+          transactionId: resultMap['transactionId'] ?? _generateTransactionId(),
           amount: amount,
           currency: currency,
-          cardType: result['cardType'] ?? 'Unknown',
-          cardNumber: result['cardNumber'] ?? '****',
-          paymentMethod: result['paymentMethod'] ?? paymentMethod,
+          cardType: resultMap['cardType'] ?? 'Unknown',
+          cardNumber: resultMap['cardNumber'] ?? '****',
+          paymentMethod: resultMap['paymentMethod'] ?? paymentMethod,
           timestamp: DateTime.now(),
-          receiptPrinted: result['receiptPrinted'] ?? false,
+          receiptPrinted: resultMap['receiptPrinted'] ?? false,
         );
 
         print('✅ ========== PAIEMENT RÉUSSI ==========');
@@ -74,7 +64,7 @@ class PaymentService {
 
         return paymentResult;
       } else {
-        final errorMessage = result['message'] ?? 'Erreur inconnue';
+        final errorMessage = resultMap['message'] ?? 'Erreur inconnue';
         print('❌ ========== PAIEMENT ÉCHOUÉ ==========');
         print('📝 Raison: $errorMessage');
         print('========================================');
@@ -91,9 +81,6 @@ class PaymentService {
     }
   }
 
-  /// Imprime un reçu pour une transaction
-  ///
-  /// Utilisé si l'impression automatique a échoué
   Future<bool> printReceipt({
     required String transactionId,
     required double amount,
@@ -116,7 +103,7 @@ class PaymentService {
         'timestamp': (timestamp ?? DateTime.now()).toIso8601String(),
       };
 
-      final result = await _channel.invokeMethod('printReceipt', args);
+      final result = await _channel.invokeMethod<bool>('printReceipt', args);
 
       if (result == true) {
         print('✅ Reçu imprimé avec succès');
@@ -126,37 +113,43 @@ class PaymentService {
         return false;
       }
 
+    } on PlatformException catch (e) {
+      print('❌ Erreur impression: ${e.code} - ${e.message}');
+      return false;
     } catch (e) {
-      print('❌ Erreur impression: $e');
+      print('❌ Erreur inattendue impression: $e');
       return false;
     }
   }
 
-  /// Annule une transaction en cours
   Future<bool> cancelPayment() async {
     try {
       print('🚫 Annulation du paiement...');
-      final result = await _channel.invokeMethod('cancelPayment');
+      final result = await _channel.invokeMethod<bool>('cancelPayment');
       print(result == true ? '✅ Paiement annulé' : '⚠️ Échec annulation');
       return result == true;
+    } on PlatformException catch (e) {
+      print('❌ Erreur annulation: ${e.code} - ${e.message}');
+      return false;
     } catch (e) {
-      print('❌ Erreur annulation: $e');
+      print('❌ Erreur inattendue annulation: $e');
       return false;
     }
   }
 
-  /// Vérifie si le terminal est prêt
   Future<bool> isReady() async {
     try {
-      final result = await _channel.invokeMethod('isReady');
-      return result == true;
+      final result = await _channel.invokeMethod<bool>('isReady');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      print('❌ Erreur vérification terminal: ${e.code} - ${e.message}');
+      return false;
     } catch (e) {
-      print('❌ Erreur vérification terminal: $e');
+      print('❌ Erreur inattendue vérification: $e');
       return false;
     }
   }
 
-  /// Génère un ID de transaction unique (fallback)
   String _generateTransactionId() {
     final now = DateTime.now();
     final timestamp = now.millisecondsSinceEpoch;
@@ -164,7 +157,6 @@ class PaymentService {
   }
 }
 
-/// Résultat d'une transaction de paiement
 class PaymentResult {
   final bool success;
   final String? transactionId;
@@ -190,7 +182,6 @@ class PaymentResult {
     this.errorMessage,
   });
 
-  /// Crée un résultat de succès
   factory PaymentResult.success({
     required String transactionId,
     required double amount,
@@ -214,7 +205,6 @@ class PaymentResult {
     );
   }
 
-  /// Crée un résultat d'erreur
   factory PaymentResult.error(String message) {
     return PaymentResult._(
       success: false,
@@ -222,7 +212,6 @@ class PaymentResult {
     );
   }
 
-  /// Convertit en Map pour l'envoi WebSocket
   Map<String, dynamic> toJson() {
     return {
       'success': success,
