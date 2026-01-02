@@ -16,6 +16,7 @@ dependencies:
   google_mlkit_document_scanner:
   connectivity_plus: ^6.0.3
   flutter_mrz_scanner:
+  itc_sunmi_card_reader:
   mrz_parser:
   flutter_nfc_kit: ^3.0.0
   web_socket_channel:
